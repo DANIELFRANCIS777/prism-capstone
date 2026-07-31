@@ -95,33 +95,51 @@ async def authenticate_admin(username: str, password: str, db: AsyncSession) -> 
 async def rotate_refresh_token(refresh_token: str, db: AsyncSession) -> dict:
     """Validates, single-use-consumes, and replaces a refresh token. Reuse of
     an already-consumed or revoked token is treated as a theft signal: every
-    other active token for that user is revoked too."""
+    other active token for that user is revoked too.
+
+    Single-use is enforced by one atomic conditional UPDATE (mirroring
+    rate_limit.py's pattern), not a SELECT-then-check-then-UPDATE - two
+    concurrent requests presenting the same token can't both read "not yet
+    used" before either commits; only one UPDATE can ever match the row."""
     claims = _decode(refresh_token)
     if claims.get("type") != "refresh":
         raise GatewayError(401, "Not a refresh token", "authentication_error")
 
     jti = claims["jti"]
-    result = await db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
-    record = result.scalar_one_or_none()
-    if record is None:
-        raise GatewayError(401, "Unknown refresh token", "authentication_error")
-
-    if record.revoked_at is not None or record.used_at is not None:
-        await db.execute(
-            update(RefreshToken)
-            .where(
-                RefreshToken.admin_user_id == record.admin_user_id,
-                RefreshToken.revoked_at.is_(None),
-            )
-            .values(revoked_at=datetime.now(timezone.utc))
+    result = await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.jti == jti,
+            RefreshToken.used_at.is_(None),
+            RefreshToken.revoked_at.is_(None),
         )
-        await db.commit()
-        raise GatewayError(401, "Refresh token already used or revoked", "authentication_error")
-
-    record.used_at = datetime.now(timezone.utc)
+        .values(used_at=datetime.now(timezone.utc))
+        .returning(RefreshToken.admin_user_id)
+    )
+    admin_user_id = result.scalar_one_or_none()
     await db.commit()
 
-    user_result = await db.execute(select(AdminUser).where(AdminUser.id == record.admin_user_id))
+    if admin_user_id is None:
+        # Unknown token, or a known one that's already used/revoked. For a
+        # known token, treat reuse as a theft signal and revoke every other
+        # active token for that user.
+        existing = await db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
+        record = existing.scalar_one_or_none()
+        if record is not None:
+            await db.execute(
+                update(RefreshToken)
+                .where(
+                    RefreshToken.admin_user_id == record.admin_user_id,
+                    RefreshToken.revoked_at.is_(None),
+                )
+                .values(revoked_at=datetime.now(timezone.utc))
+            )
+            await db.commit()
+        raise GatewayError(
+            401, "Refresh token unknown, already used, or revoked", "authentication_error"
+        )
+
+    user_result = await db.execute(select(AdminUser).where(AdminUser.id == admin_user_id))
     user = user_result.scalar_one_or_none()
     if user is None or user.status != "active":
         raise GatewayError(401, "Account no longer active", "authentication_error")

@@ -1,0 +1,180 @@
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.adapters.base import UpstreamError
+from app.auth import GatewayError, authenticate, enforce_allowlist
+from app.budget import current_year_month, enforce_budget, record_usage
+from app.cache import find_cache_hit, record_cache_hit, store_cache_entry
+from app.config import get_settings
+from app.db import get_db
+from app.rate_limit import enforce_rate_limit
+from app.request_log import log_request
+from app.routing.aliases import RouteNotImplementedError, UnknownModelError
+from app.routing.auto_router import resolve_route
+from app.routing.dispatch import dispatch_non_streaming, dispatch_streaming
+from app.routing.pricing import compute_cost_usd
+from app.streaming import forward_stream
+
+router = APIRouter()
+
+
+@router.post("/v1/chat/completions")
+async def chat_completions(
+    request: Request, response: Response, db: AsyncSession = Depends(get_db)
+):
+    authorization = request.headers.get("authorization")
+
+    try:
+        key = await authenticate(authorization, db)
+    except GatewayError as exc:
+        await log_request(db, virtual_key="", requested_model="", status="rejected_auth")
+        raise exc
+
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise GatewayError(400, "Request body is not valid JSON", "invalid_request_error") from exc
+
+    requested_model = body.get("model")
+    messages = body.get("messages")
+    stream = bool(body.get("stream"))
+
+    if not requested_model:
+        raise GatewayError(400, "'model' is required", "invalid_request_error")
+    if not isinstance(messages, list) or not messages:
+        raise GatewayError(400, "'messages' must be a non-empty list", "invalid_request_error")
+
+    try:
+        chain, route_reason = resolve_route(requested_model, messages)
+    except UnknownModelError as exc:
+        await log_request(
+            db, virtual_key=key.virtual_key, requested_model=requested_model,
+            status="rejected_not_found",
+        )
+        raise GatewayError(404, str(exc), "not_found_error") from exc
+    except RouteNotImplementedError as exc:
+        raise GatewayError(501, str(exc), "not_implemented_error") from exc
+
+    try:
+        enforce_allowlist(key, requested_model)
+    except GatewayError as exc:
+        await log_request(
+            db, virtual_key=key.virtual_key, requested_model=requested_model,
+            status="rejected_allowlist",
+        )
+        raise exc
+
+    try:
+        await enforce_rate_limit(db, key)
+    except GatewayError as exc:
+        await log_request(
+            db, virtual_key=key.virtual_key, requested_model=requested_model,
+            status="rejected_rate_limit",
+        )
+        raise exc
+
+    year_month = current_year_month()
+    try:
+        await enforce_budget(db, key, year_month)
+    except GatewayError as exc:
+        await log_request(
+            db, virtual_key=key.virtual_key, requested_model=requested_model,
+            status="rejected_budget",
+        )
+        raise exc
+
+    settings = get_settings()
+
+    # Cache lookup: non-streaming only (documented simplification - see
+    # docs/IMPLEMENTATION_GUIDE.md FAQ on streaming + cache). Scoped per key,
+    # keyed by the literal requested alias/model, never shared across tenants.
+    if not stream and key.cache_enabled:
+        cached = await find_cache_hit(
+            db, key.virtual_key, requested_model, messages, key.cache_similarity_threshold
+        )
+        if cached is not None:
+            await record_cache_hit(db, cached)
+            await log_request(
+                db,
+                virtual_key=key.virtual_key,
+                requested_model=requested_model,
+                resolved_provider=cached.resolved_provider,
+                resolved_model=cached.resolved_model,
+                status="ok",
+                cache="hit",
+                fallback=False,
+                cost_usd=0,
+                route_reason=route_reason,
+            )
+            response.headers["x-prism-provider"] = f"{cached.resolved_provider}/{cached.resolved_model}"
+            response.headers["x-prism-cache"] = "hit"
+            response.headers["x-prism-fallback"] = "false"
+            response.headers["x-prism-cost-usd"] = "0"
+            return cached.response_body
+
+    if stream:
+        try:
+            handle = await dispatch_streaming(chain, messages, settings.upstream_timeout_seconds)
+        except UpstreamError as exc:
+            await log_request(
+                db, virtual_key=key.virtual_key, requested_model=requested_model,
+                status="upstream_error", retries=getattr(exc, "retries", 0),
+                route_reason=route_reason,
+            )
+            raise GatewayError(502, str(exc), "upstream_error") from exc
+
+        response_headers = {
+            "x-prism-provider": f"{handle.route.provider_name}/{handle.route.model}",
+            "x-prism-cache": "miss",
+            "x-prism-fallback": "true" if handle.fallback else "false",
+        }
+        return StreamingResponse(
+            forward_stream(db, key, requested_model, handle, route_reason),
+            media_type="text/event-stream",
+            headers=response_headers,
+        )
+
+    try:
+        result = await dispatch_non_streaming(chain, messages, settings.upstream_timeout_seconds)
+    except UpstreamError as exc:
+        await log_request(
+            db, virtual_key=key.virtual_key, requested_model=requested_model,
+            status="upstream_error", retries=getattr(exc, "retries", 0),
+            route_reason=route_reason,
+        )
+        raise GatewayError(502, str(exc), "upstream_error") from exc
+
+    usage = result.body.get("usage", {})
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+    cost_usd = compute_cost_usd(result.route.model, prompt_tokens, completion_tokens)
+
+    if key.cache_enabled:
+        await store_cache_entry(
+            db, key.virtual_key, requested_model, messages, result.body,
+            result.route.provider_name, result.route.model,
+        )
+
+    await record_usage(db, key, year_month, cost_usd, prompt_tokens, completion_tokens)
+    await log_request(
+        db,
+        virtual_key=key.virtual_key,
+        requested_model=requested_model,
+        resolved_provider=result.route.provider_name,
+        resolved_model=result.route.model,
+        status="ok",
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost_usd=cost_usd,
+        cache="miss",
+        fallback=result.fallback,
+        retries=result.retries,
+        route_reason=route_reason,
+    )
+
+    response.headers["x-prism-provider"] = f"{result.route.provider_name}/{result.route.model}"
+    response.headers["x-prism-cache"] = "miss"
+    response.headers["x-prism-fallback"] = "true" if result.fallback else "false"
+    response.headers["x-prism-cost-usd"] = str(cost_usd)
+    return result.body

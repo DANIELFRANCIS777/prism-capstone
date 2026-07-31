@@ -1,19 +1,12 @@
 import pytest
 
 from app.auth import GatewayError, enforce_allowlist
-from app.models import VirtualKey
+from tests.conftest import make_virtual_key
 
 
 def _key(allowlist):
     # Not persisted - enforce_allowlist only reads the attribute in memory.
-    return VirtualKey(
-        virtual_key="test-key",
-        team="test",
-        monthly_budget_usd=10,
-        requests_per_minute=10,
-        model_allowlist=allowlist,
-        status="active",
-    )
+    return make_virtual_key(model_allowlist=allowlist)
 
 
 def test_allowed_model_passes_without_raising():

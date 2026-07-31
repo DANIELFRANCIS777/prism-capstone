@@ -30,7 +30,15 @@ class OpenAICompatibleAdapter(ProviderAdapter):
                 f"{self.name} returned {response.status_code}: {response.text[:200]}",
                 status_code=response.status_code,
             )
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as exc:
+            # A 2xx with a malformed/truncated body - treat like a connection
+            # failure (no status_code, so it's retryable) rather than letting
+            # a JSONDecodeError escape uncaught past the retry/failover logic.
+            raise UpstreamError(
+                f"{self.name} returned a malformed JSON response: {exc}"
+            ) from exc
 
     async def stream_chat_completion(self, model: str, messages: list[dict], timeout: float):
         try:

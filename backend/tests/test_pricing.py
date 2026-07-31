@@ -1,5 +1,6 @@
 import pytest
 
+from app.config import validate_pricing_coverage
 from app.routing.pricing import compute_cost_usd
 
 
@@ -33,3 +34,21 @@ def test_cost_uses_provider_reported_tokens_not_something_client_supplied():
 
     params = list(inspect.signature(compute_cost_usd).parameters)
     assert params == ["model", "prompt_tokens", "completion_tokens"]
+
+
+def test_pricing_coverage_passes_when_every_reachable_model_is_priced():
+    validate_pricing_coverage(
+        reachable_models={"alpha-small", "beta-small"},
+        priced_models={"alpha-small", "alpha-large", "beta-small", "beta-large"},
+    )
+
+
+def test_pricing_coverage_fails_loudly_on_an_unpriced_reachable_model():
+    """Regression test: an unpriced-but-reachable model must fail startup
+    instead of silently metering real usage as free (see compute_cost_usd's
+    price-is-None branch)."""
+    with pytest.raises(RuntimeError, match="gamma-small"):
+        validate_pricing_coverage(
+            reachable_models={"alpha-small", "gamma-small"},
+            priced_models={"alpha-small"},
+        )

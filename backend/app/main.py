@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.config import get_settings
+from app.config import get_settings, validate_pricing_coverage
 from app.db import Base, async_session, engine
 from app.jwt_keys import ensure_keys_exist
 from app.routers import admin, chat
@@ -13,6 +13,7 @@ from app.seed import seed_admin_user, seed_virtual_keys
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_pricing_coverage()
     ensure_keys_exist()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

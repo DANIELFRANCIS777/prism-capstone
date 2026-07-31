@@ -70,3 +70,28 @@ def load_seed_keys() -> list[dict]:
 def model_provider_map() -> dict[str, str]:
     config = load_gateway_config()
     return {model: p["name"] for p in config["providers"] for model in p["models"]}
+
+
+def validate_pricing_coverage(
+    reachable_models: set[str] | None = None, priced_models: set[str] | None = None
+) -> None:
+    """Every model reachable via the gateway config must have a price entry -
+    otherwise real provider usage against it would be silently metered as
+    free (compute_cost_usd returns 0.0 for an unpriced model) and bypass
+    budget enforcement with no signal that pricing data is missing. Checked
+    once at startup so a config/pricing mismatch fails loudly before serving
+    any traffic, rather than leaking cost silently on the hot path.
+
+    Accepts explicit sets (rather than always reading the real, lru_cache'd
+    config) so it's trivially unit-testable without faking out the cache."""
+    if reachable_models is None:
+        reachable_models = set(model_provider_map())
+    if priced_models is None:
+        priced_models = set(load_model_pricing())
+    missing = sorted(reachable_models - priced_models)
+    if missing:
+        raise RuntimeError(
+            "Model(s) reachable via the gateway config have no entry in "
+            f"data/model_pricing.json: {missing}. Add pricing before serving traffic, "
+            "or usage against them will be silently metered as free."
+        )

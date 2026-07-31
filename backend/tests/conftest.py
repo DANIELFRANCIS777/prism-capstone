@@ -10,6 +10,7 @@ connections bound to a loop that's already gone, producing "another
 operation is in progress" errors on the next test that reuses them."""
 
 import asyncio
+import uuid
 
 import pytest
 import pytest_asyncio
@@ -18,6 +19,28 @@ from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 from app.db import Base
+from app.jwt_keys import ensure_keys_exist
+from app.models import VirtualKey
+
+# Only main.py's lifespan normally generates the RS256 key pair; pytest never
+# runs that, so admin-auth tests (JWT signing) need it done explicitly once.
+ensure_keys_exist()
+
+
+def make_virtual_key(**overrides) -> VirtualKey:
+    """Shared VirtualKey factory for tests - a unique virtual_key per call
+    (tests that persist it need that), with sensible defaults callers can
+    override piecemeal."""
+    fields = dict(
+        virtual_key=f"test-{uuid.uuid4().hex[:8]}",
+        team="test",
+        monthly_budget_usd=100,
+        requests_per_minute=10,
+        model_allowlist=["fast"],
+        status="active",
+    )
+    fields.update(overrides)
+    return VirtualKey(**fields)
 
 
 @pytest.fixture(scope="session")

@@ -1,0 +1,32 @@
+{
+  "_comment": "Live gateway config, derived from data/gateway_config.sample.json. Restructured to add an explicit models[] list per provider so the gateway never has to infer provider ownership from a model-name prefix. Provider names, model names, and alias names are preserved from the sample pack.",
+  "providers": [
+    {
+      "name": "alpha",
+      "base_url": "http://localhost:9001/v1",
+      "api_key": "mock-key-alpha",
+      "models": ["alpha-small", "alpha-large"]
+    },
+    {
+      "name": "beta",
+      "base_url": "http://localhost:9002/v1",
+      "api_key": "mock-key-beta",
+      "models": ["beta-small", "beta-large"]
+    }
+  ],
+  "model_aliases": {
+    "fast":  { "primary": "alpha-small", "fallbacks": ["beta-small"] },
+    "smart": { "primary": "alpha-large", "fallbacks": ["beta-large"] },
+    "auto":  {
+      "_comment": "smart router: the gateway classifies each prompt's difficulty and routes to a tier; graded against data/routing_eval.jsonl",
+      "route_by_difficulty": { "simple": "fast", "complex": "smart" }
+    }
+  },
+  "retry": { "max_attempts": 3, "initial_backoff_ms": 200, "backoff_multiplier": 2 },
+  "degradation": {
+    "_comment": "Suggested thresholds for treating a provider as degraded and skipping to fallback.",
+    "error_rate_threshold": 0.5,
+    "window_seconds": 60,
+    "p95_latency_ms": 5000
+  }
+}

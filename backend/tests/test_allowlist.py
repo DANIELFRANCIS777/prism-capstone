@@ -1,0 +1,42 @@
+import pytest
+
+from app.auth import GatewayError, enforce_allowlist
+from app.models import VirtualKey
+
+
+def _key(allowlist):
+    # Not persisted - enforce_allowlist only reads the attribute in memory.
+    return VirtualKey(
+        virtual_key="test-key",
+        team="test",
+        monthly_budget_usd=10,
+        requests_per_minute=10,
+        model_allowlist=allowlist,
+        status="active",
+    )
+
+
+def test_allowed_model_passes_without_raising():
+    enforce_allowlist(_key(["fast"]), "fast")
+
+
+def test_disallowed_model_is_rejected_with_403():
+    with pytest.raises(GatewayError) as exc_info:
+        enforce_allowlist(_key(["fast"]), "smart")
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["error"]["type"] == "model_not_allowed"
+
+
+def test_empty_allowlist_rejects_everything():
+    with pytest.raises(GatewayError):
+        enforce_allowlist(_key([]), "fast")
+
+
+def test_allowlist_checks_the_literal_requested_alias():
+    """A key allowed to call `fast` should not automatically be allowed to
+    call `auto`, even though `auto` might resolve to `fast` internally -
+    the allowlist governs what the caller asked for, not what serves it."""
+    key = _key(["fast"])
+    enforce_allowlist(key, "fast")
+    with pytest.raises(GatewayError):
+        enforce_allowlist(key, "auto")

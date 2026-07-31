@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: prism
+      POSTGRES_PASSWORD: prism
+      POSTGRES_DB: prism
+    ports:
+      - "5432:5432"
+    volumes:
+      - prism_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prism"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Zero-dependency mock OpenAI-compatible providers (scripts/mock_provider.py).
+  mock-alpha:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    command: ["--port", "9001", "--name", "alpha"]
+    ports:
+      - "9001:9001"
+
+  mock-beta:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    command: ["--port", "9002", "--name", "beta"]
+    ports:
+      - "9002:9002"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://prism:prism@postgres:5432/prism
+      UPSTREAM_TIMEOUT_SECONDS: "10"
+      GATEWAY_CONFIG_FILE: gateway_config.docker.json
+      ADMIN_BOOTSTRAP_USERNAME: admin
+      ADMIN_BOOTSTRAP_PASSWORD: prism-admin-dev-password
+    volumes:
+      # Persists the RS256 key pair across container recreates - without this,
+      # every rebuild would mint a new key pair and silently invalidate every
+      # token issued before it (see app/jwt_keys.py).
+      - prism_jwt_keys:/srv/prism-capstone/backend/keys
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-alpha:
+        condition: service_started
+      mock-beta:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      # Points the *browser* at the gateway's published host port - this runs
+      # client-side, so it can't use the "gateway" service name.
+      VITE_API_BASE_URL: http://localhost:8080
+    depends_on:
+      - gateway
+
+volumes:
+  prism_pgdata:
+  prism_jwt_keys:

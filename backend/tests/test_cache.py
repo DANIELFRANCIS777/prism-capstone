@@ -46,3 +46,16 @@ async def test_cache_is_scoped_per_alias_not_just_per_key(db):
 
     hit_different_alias = await find_cache_hit(db, key, "smart", messages, threshold=0.5)
     assert hit_different_alias is None
+
+
+async def test_cache_lookup_skips_rather_than_crashes_on_null_threshold(db):
+    """Regression test: cache_similarity_threshold is nullable (a key can have
+    caching enabled with no threshold configured). find_cache_hit must treat
+    that as "no match possible", not raise comparing float >= None."""
+    key = f"test-cache-null-threshold-{uuid.uuid4().hex[:8]}"
+    messages = [{"role": "user", "content": "does this crash without a threshold"}]
+
+    await store_cache_entry(db, key, "fast", messages, {"id": "resp"}, "alpha", "alpha-small")
+
+    result = await find_cache_hit(db, key, "fast", messages, threshold=None)
+    assert result is None

@@ -19,8 +19,18 @@ def _prompt_text(messages: list[dict]) -> str:
 
 
 async def find_cache_hit(
-    db: AsyncSession, virtual_key: str, requested_model: str, messages: list[dict], threshold: float
+    db: AsyncSession,
+    virtual_key: str,
+    requested_model: str,
+    messages: list[dict],
+    threshold: float | None,
 ) -> CacheEntry | None:
+    # threshold is None whenever a key has caching enabled but no similarity
+    # threshold configured - there's no basis for a match, so skip the cache
+    # rather than crash comparing a float against None.
+    if threshold is None:
+        return None
+
     prompt_text = _prompt_text(messages)
     query_vector = term_frequency(prompt_text)
     if not query_vector:

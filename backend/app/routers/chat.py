@@ -19,6 +19,24 @@ from app.streaming import forward_stream
 router = APIRouter()
 
 
+async def _log_rejection(
+    db: AsyncSession,
+    status: str,
+    virtual_key: str = "",
+    requested_model: str = "",
+    route_reason: str | None = None,
+) -> None:
+    """Every rejection path calls this before raising - AGENTS.md: 'Log every
+    request, including rejections.'"""
+    await log_request(
+        db,
+        virtual_key=virtual_key,
+        requested_model=requested_model,
+        status=status,
+        route_reason=route_reason,
+    )
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(
     request: Request, response: Response, db: AsyncSession = Depends(get_db)
@@ -28,12 +46,13 @@ async def chat_completions(
     try:
         key = await authenticate(authorization, db)
     except GatewayError as exc:
-        await log_request(db, virtual_key="", requested_model="", status="rejected_auth")
+        await _log_rejection(db, "rejected_auth")
         raise exc
 
     try:
         body = await request.json()
     except ValueError as exc:
+        await _log_rejection(db, "rejected_invalid_request", key.virtual_key)
         raise GatewayError(400, "Request body is not valid JSON", "invalid_request_error") from exc
 
     requested_model = body.get("model")
@@ -41,47 +60,38 @@ async def chat_completions(
     stream = bool(body.get("stream"))
 
     if not requested_model:
+        await _log_rejection(db, "rejected_invalid_request", key.virtual_key)
         raise GatewayError(400, "'model' is required", "invalid_request_error")
     if not isinstance(messages, list) or not messages:
+        await _log_rejection(db, "rejected_invalid_request", key.virtual_key, requested_model)
         raise GatewayError(400, "'messages' must be a non-empty list", "invalid_request_error")
 
     try:
         chain, route_reason = resolve_route(requested_model, messages)
     except UnknownModelError as exc:
-        await log_request(
-            db, virtual_key=key.virtual_key, requested_model=requested_model,
-            status="rejected_not_found",
-        )
+        await _log_rejection(db, "rejected_not_found", key.virtual_key, requested_model)
         raise GatewayError(404, str(exc), "not_found_error") from exc
     except RouteNotImplementedError as exc:
+        await _log_rejection(db, "rejected_not_implemented", key.virtual_key, requested_model)
         raise GatewayError(501, str(exc), "not_implemented_error") from exc
 
     try:
         enforce_allowlist(key, requested_model)
     except GatewayError as exc:
-        await log_request(
-            db, virtual_key=key.virtual_key, requested_model=requested_model,
-            status="rejected_allowlist",
-        )
+        await _log_rejection(db, "rejected_allowlist", key.virtual_key, requested_model, route_reason)
         raise exc
 
     try:
         await enforce_rate_limit(db, key)
     except GatewayError as exc:
-        await log_request(
-            db, virtual_key=key.virtual_key, requested_model=requested_model,
-            status="rejected_rate_limit",
-        )
+        await _log_rejection(db, "rejected_rate_limit", key.virtual_key, requested_model, route_reason)
         raise exc
 
     year_month = current_year_month()
     try:
         await enforce_budget(db, key, year_month)
     except GatewayError as exc:
-        await log_request(
-            db, virtual_key=key.virtual_key, requested_model=requested_model,
-            status="rejected_budget",
-        )
+        await _log_rejection(db, "rejected_budget", key.virtual_key, requested_model, route_reason)
         raise exc
 
     settings = get_settings()

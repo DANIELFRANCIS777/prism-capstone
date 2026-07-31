@@ -1,0 +1,300 @@
+{
+  "info": {
+    "name": "Prism Gateway",
+    "description": "Every endpoint the gateway exposes. Import into Postman, then just run requests - the collection variables already point at the local Docker stack and the seeded demo keys. Run 'Admin Auth > Login' first if you want to hit any /admin/* route - it automatically saves the access/refresh tokens into collection variables that the other admin requests already reference.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8080" },
+    { "key": "admin_username", "value": "admin" },
+    { "key": "admin_password", "value": "prism-admin-dev-password" },
+    { "key": "admin_access_token", "value": "" },
+    { "key": "admin_refresh_token", "value": "" },
+    { "key": "search_key", "value": "prism-sk-search-1a2b3c" },
+    { "key": "research_key", "value": "prism-sk-research-4d5e6f" },
+    { "key": "free_key", "value": "prism-sk-free-7g8h9i" },
+    { "key": "budget_demo_key", "value": "prism-sk-budget-demo-0j1k2l" }
+  ],
+  "item": [
+    {
+      "name": "Data plane",
+      "item": [
+        {
+          "name": "Chat completion - fast (non-streaming)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{search_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"fast\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"What is a message queue?\"}]\n}"
+            }
+          }
+        },
+        {
+          "name": "Chat completion - fast (streaming)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{search_key}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"fast\",\n  \"stream\": true,\n  \"messages\": [{\"role\": \"user\", \"content\": \"Explain server-sent events briefly.\"}]\n}"
+            },
+            "description": "Postman shows SSE as one raw response body once the stream ends (older Postman versions don't render it token-by-token) - use curl -N if you want to watch it arrive live: see AGENTS.md."
+          }
+        },
+        {
+          "name": "Chat completion - auto (short-but-hard, should route smart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{research_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"Prove that the square root of 2 is irrational.\"}]\n}"
+            }
+          }
+        },
+        {
+          "name": "Chat completion - auto (long-but-trivial, should route fast)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{research_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"Here is our on-call roster: Monday - Priya, Tuesday - Chen. Who is on call this Thursday?\"}]\n}"
+            }
+          }
+        },
+        {
+          "name": "Chat completion - smart (research key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{research_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"smart\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"Design a rate limiter for a multi-tenant API. What algorithm would you pick and why?\"}]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "item": [
+        {
+          "name": "401 - invalid key",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer not-a-real-key" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": { "mode": "raw", "raw": "{\n  \"model\": \"fast\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]\n}" }
+          }
+        },
+        {
+          "name": "403 - model not on allowlist",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{search_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": { "mode": "raw", "raw": "{\n  \"model\": \"smart\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]\n}" },
+            "description": "search key's allowlist is only [\"fast\"]"
+          }
+        },
+        {
+          "name": "404 - unknown model",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{search_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": { "mode": "raw", "raw": "{\n  \"model\": \"no-such-model\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]\n}" }
+          }
+        },
+        {
+          "name": "402 - budget exhausted (run twice)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{budget_demo_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": { "mode": "raw", "raw": "{\n  \"model\": \"fast\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]\n}" },
+            "description": "budget-demo key has a $0.00001 budget - the first call consumes it, the second returns 402 budget_exceeded."
+          }
+        },
+        {
+          "name": "429 - rate limit (run 11+ times fast)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{free_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": { "mode": "raw", "raw": "{\n  \"model\": \"fast\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]\n}" },
+            "description": "free-tier key allows 10 requests/minute - use Postman's Runner to fire this 11+ times quickly."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('admin_access_token', body.access_token);",
+                  "pm.collectionVariables.set('admin_refresh_token', body.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/admin/auth/login", "host": ["{{base_url}}"], "path": ["admin", "auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{admin_username}}\",\n  \"password\": \"{{admin_password}}\"\n}"
+            }
+          },
+          "description": "Run this first. Saves access_token/refresh_token into collection variables that every request in the 'Admin' folder already uses - no copy-pasting needed."
+        },
+        {
+          "name": "Refresh (rotates the token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.access_token) {",
+                  "  pm.collectionVariables.set('admin_access_token', body.access_token);",
+                  "  pm.collectionVariables.set('admin_refresh_token', body.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/admin/auth/refresh", "host": ["{{base_url}}"], "path": ["admin", "auth", "refresh"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{admin_refresh_token}}\"\n}"
+            }
+          },
+          "description": "Consumes the current refresh token and issues a new pair. Running this twice in a row with the same saved token will fail on the second call by design - that's the single-use rotation working."
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/admin/auth/logout", "host": ["{{base_url}}"], "path": ["admin", "auth", "logout"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{admin_refresh_token}}\"\n}"
+            }
+          },
+          "description": "Revokes the refresh token - it can no longer be used to mint new access tokens. The current access token stays valid until it naturally expires (up to 30 min)."
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Usage summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/usage?key={{search_key}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "usage"],
+              "query": [
+                { "key": "key", "value": "{{search_key}}" },
+                { "key": "from", "value": "2026-07-01", "disabled": true },
+                { "key": "to", "value": "2026-07-31", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Recent request logs",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/logs?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "logs"],
+              "query": [
+                { "key": "key", "value": "{{search_key}}", "disabled": true },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cache stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/cache/stats",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cache", "stats"],
+              "query": [{ "key": "key", "value": "{{search_key}}", "disabled": true }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

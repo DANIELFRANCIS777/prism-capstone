@@ -9,17 +9,33 @@ export class ApiError extends Error {
 }
 
 async function request(path, { method = 'GET', token, body } = {}) {
-  const headers = { 'Content-Type': 'application/json' }
+  const headers = {}
+  // Only declare a content type for a body we're actually sending - a
+  // Content-Type on a body-less GET describes nothing and some proxies
+  // treat it as malformed.
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (token) headers.Authorization = `Bearer ${token}`
 
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   })
 
+  // Read as text first, then parse only if there's something to parse: an
+  // empty body served with a JSON content-type (a 204, or a proxy-generated
+  // error page) would otherwise throw a SyntaxError that isn't an ApiError,
+  // escaping the error handling below instead of surfacing through it.
   const contentType = res.headers.get('content-type') || ''
-  const data = contentType.includes('application/json') ? await res.json() : await res.text()
+  const raw = await res.text()
+  let data = raw
+  if (raw && contentType.includes('application/json')) {
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      data = raw // malformed JSON - fall back to the raw text for the message
+    }
+  }
 
   if (!res.ok) {
     const message = data?.error?.message || data?.detail || `Request failed (${res.status})`

@@ -89,6 +89,25 @@ python3 scripts/load_test.py  --url http://localhost:8080 --key prism-sk-free-7g
 cd backend && python3 scripts/routing_eval.py   # auto-router accuracy against data/routing_eval.jsonl
 ```
 
+### Database migrations (Alembic)
+
+The schema is owned by Alembic revisions in `backend/migrations/versions/`, not by
+`Base.metadata.create_all`. The gateway applies pending revisions on startup by default
+(`RUN_MIGRATIONS_ON_STARTUP`), holding a Postgres advisory lock so concurrent replicas can't
+race. A database created by the old `create_all` path is detected and stamped rather than
+rebuilt, so upgrading in place is safe.
+
+```bash
+cd backend
+alembic revision --autogenerate -m "what changed"   # after editing app/models.py
+alembic upgrade head                                 # apply
+alembic downgrade -1                                 # roll back one revision
+alembic check                                        # models vs migrations drift
+```
+
+**Any change to `app/models.py` needs a revision in the same commit** —
+`tests/test_migrations.py` fails the build otherwise.
+
 ### Automated tests (pytest)
 
 ```bash

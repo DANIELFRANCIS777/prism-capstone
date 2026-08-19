@@ -18,8 +18,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
-from app.db import Base
+from app.db import engine as app_engine
 from app.jwt_keys import ensure_keys_exist
+from app.migrate import run_migrations
 from app.models import VirtualKey
 
 # Only main.py's lifespan normally generates the RS256 key pair; pytest never
@@ -52,9 +53,16 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
+    # Build the schema the same way production does - through the migrations -
+    # so a revision that's missing or wrong fails the suite instead of being
+    # papered over by create_all against the live models.
+    await run_migrations()
+    # run_migrations() borrows the app's normally-pooled engine. Nothing else in
+    # the suite uses it, so hand its connections back immediately instead of
+    # holding one open for the whole session.
+    await app_engine.dispose()
+
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     yield engine
     await engine.dispose()
 

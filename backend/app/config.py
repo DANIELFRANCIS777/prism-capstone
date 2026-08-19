@@ -15,6 +15,10 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://prism:prism@localhost:5432/prism"
     upstream_timeout_seconds: float = 10.0
+    # Applies pending Alembic revisions during startup, serialized across
+    # replicas by an advisory lock (app/migrate.py). Turn off if you'd rather
+    # run `alembic upgrade head` as an explicit release step.
+    run_migrations_on_startup: bool = True
     # Selects which file in config/ to load. Local dev uses the default
     # (providers on localhost); the Docker Compose gateway service overrides
     # this to gateway_config.docker.json (providers reached by service name).

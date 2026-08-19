@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { useAuth } from '../AuthContext'
+import { useAdminAuth } from '../AdminAuthContext'
 
 export default function LoginForm() {
-  const { login } = useAuth()
+  const { login } = useAdminAuth()
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)

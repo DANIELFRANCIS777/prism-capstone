@@ -1,34 +1,38 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useAdminAuth } from '../AdminAuthContext'
 import { adminApi } from '../api'
-import { useAuth } from '../AuthContext'
 import CacheStatsCard from './CacheStatsCard'
 import RequestLogsTable from './RequestLogsTable'
 import UsageCard from './UsageCard'
 
-const DEMO_KEYS = [
-  { label: 'search (prism-sk-search-1a2b3c)', value: 'prism-sk-search-1a2b3c' },
-  { label: 'research (prism-sk-research-4d5e6f)', value: 'prism-sk-research-4d5e6f' },
-  { label: 'free-tier (prism-sk-free-7g8h9i)', value: 'prism-sk-free-7g8h9i' },
-  { label: 'budget-demo (prism-sk-budget-demo-0j1k2l)', value: 'prism-sk-budget-demo-0j1k2l' },
-]
-
 export default function Dashboard() {
-  const { authFetch, logout } = useAuth()
-  const [selectedKey, setSelectedKey] = useState(DEMO_KEYS[0].value)
+  const { authFetch, logout } = useAdminAuth()
+  const [keys, setKeys] = useState([])
+  const [selectedKeyId, setSelectedKeyId] = useState(null)
   const [usage, setUsage] = useState(null)
   const [logs, setLogs] = useState([])
   const [cacheStats, setCacheStats] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
 
+  useEffect(() => {
+    authFetch((token) => adminApi.listKeys(token))
+      .then((result) => {
+        setKeys(result)
+        if (result.length > 0) setSelectedKeyId(result[0].id)
+      })
+      .catch((err) => setError(err.message || 'Failed to load keys'))
+  }, [authFetch])
+
   const loadAll = useCallback(async () => {
+    if (selectedKeyId == null) return
     setLoading(true)
     setError(null)
     try {
       const [usageResult, logsResult, cacheResult] = await Promise.all([
-        authFetch((token) => adminApi.usage(token, selectedKey)),
-        authFetch((token) => adminApi.logs(token, selectedKey, 25)),
-        authFetch((token) => adminApi.cacheStats(token, selectedKey)),
+        authFetch((token) => adminApi.usage(token, selectedKeyId)),
+        authFetch((token) => adminApi.logs(token, selectedKeyId, 25)),
+        authFetch((token) => adminApi.cacheStats(token, selectedKeyId)),
       ])
       setUsage(usageResult)
       setLogs(logsResult)
@@ -38,7 +42,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }, [authFetch, selectedKey])
+  }, [authFetch, selectedKeyId])
 
   useEffect(() => {
     loadAll()
@@ -56,15 +60,18 @@ export default function Dashboard() {
       <div className="controls">
         <label>
           Key
-          <select value={selectedKey} onChange={(e) => setSelectedKey(e.target.value)}>
-            {DEMO_KEYS.map((k) => (
-              <option key={k.value} value={k.value}>
-                {k.label}
+          <select
+            value={selectedKeyId ?? ''}
+            onChange={(e) => setSelectedKeyId(Number(e.target.value))}
+          >
+            {keys.map((k) => (
+              <option key={k.id} value={k.id}>
+                {k.team} ({k.key_prefix}…){k.org_id ? '' : ' — operator-provisioned'}
               </option>
             ))}
           </select>
         </label>
-        <button onClick={loadAll} disabled={loading}>
+        <button onClick={loadAll} disabled={loading || selectedKeyId == null}>
           {loading ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>

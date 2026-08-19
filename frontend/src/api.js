@@ -54,20 +54,72 @@ export const authApi = {
 }
 
 export const adminApi = {
-  usage: (token, key, from, to) => {
-    const params = new URLSearchParams({ key })
+  listKeys: (token) => request('/admin/keys', { token }),
+  usage: (token, keyId, from, to) => {
+    const params = new URLSearchParams({ key_id: keyId })
     if (from) params.set('from', from)
     if (to) params.set('to', to)
     return request(`/admin/usage?${params}`, { token })
   },
-  logs: (token, key, limit = 25) => {
+  logs: (token, keyId, limit = 25) => {
     const params = new URLSearchParams({ limit: String(limit) })
-    if (key) params.set('key', key)
+    if (keyId) params.set('key_id', keyId)
     return request(`/admin/logs?${params}`, { token })
   },
-  cacheStats: (token, key) => {
+  cacheStats: (token, keyId) => {
     const params = new URLSearchParams()
-    if (key) params.set('key', key)
+    if (keyId) params.set('key_id', keyId)
     return request(`/admin/cache/stats?${params}`, { token })
   },
+}
+
+export const publicApi = {
+  authConfig: () => request('/auth/config'),
+}
+
+export const userAuthApi = {
+  signup: (email, password, orgName) =>
+    request('/auth/signup', { method: 'POST', body: { email, password, org_name: orgName } }),
+  login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
+  refresh: (refresh_token) => request('/auth/refresh', { method: 'POST', body: { refresh_token } }),
+  logout: (refresh_token) => request('/auth/logout', { method: 'POST', body: { refresh_token } }),
+}
+
+export const userApi = {
+  me: (token) => request('/me', { token }),
+
+  listCredentials: (token) => request('/me/credentials', { token }),
+  putCredential: (token, provider, apiKey, label) =>
+    request(`/me/credentials/${provider}`, {
+      method: 'PUT',
+      token,
+      body: { api_key: apiKey, label },
+    }),
+  deleteCredential: (token, provider) =>
+    request(`/me/credentials/${provider}`, { method: 'DELETE', token }),
+
+  listKeys: (token) => request('/me/keys', { token }),
+  createKey: (token, { label, requestsPerMinute, monthlyBudgetUsd, modelAllowlist }) =>
+    request('/me/keys', {
+      method: 'POST',
+      token,
+      body: {
+        label,
+        requests_per_minute: requestsPerMinute,
+        monthly_budget_usd: monthlyBudgetUsd,
+        model_allowlist: modelAllowlist,
+      },
+    }),
+  setKeyStatus: (token, keyId, status) =>
+    request(`/me/keys/${keyId}`, { method: 'PATCH', token, body: { status } }),
+
+  usage: (token, from, to) => {
+    const params = new URLSearchParams()
+    if (from) params.set('from', from)
+    if (to) params.set('to', to)
+    const qs = params.toString()
+    return request(`/me/usage${qs ? `?${qs}` : ''}`, { token })
+  },
+  logs: (token, limit = 25) => request(`/me/logs?${new URLSearchParams({ limit: String(limit) })}`, { token }),
+  cacheStats: (token) => request('/me/cache-stats', { token }),
 }

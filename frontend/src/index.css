@@ -236,3 +236,131 @@ select {
   background: var(--warn-bg);
   color: var(--warn-text);
 }
+
+/* Mode toggle (signup/login) and sign-in/operator switch links */
+
+.mode-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.mode-toggle button {
+  flex: 1;
+}
+
+.mode-switch {
+  text-align: center;
+  margin-top: 12px;
+}
+
+button.link {
+  background: transparent;
+  color: var(--accent);
+  padding: 4px 8px;
+}
+
+button.link:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.hint {
+  opacity: 0.7;
+  font-size: 13px;
+  margin: 4px 0 16px;
+}
+
+/* Tenant dashboard */
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.org-label {
+  opacity: 0.7;
+  font-size: 13px;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-top: 24px;
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.inline-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.inline-form input,
+.inline-form select {
+  width: 160px;
+}
+
+.credentials-list,
+.keys-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.credentials-list li,
+.keys-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.credential-provider {
+  font-weight: 600;
+  color: var(--text-h);
+  min-width: 70px;
+}
+
+.credential-prefix {
+  font-family: ui-monospace, monospace;
+  opacity: 0.8;
+}
+
+.credential-label {
+  opacity: 0.7;
+}
+
+.credentials-list li > button,
+.keys-list li > button {
+  margin-left: auto;
+}
+
+.key-reveal {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.key-reveal code {
+  font-family: ui-monospace, monospace;
+  font-size: 14px;
+  user-select: all;
+}

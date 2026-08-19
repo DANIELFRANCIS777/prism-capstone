@@ -65,6 +65,7 @@ async def auth_config():
         "signup_enabled": settings.self_serve_signup_enabled,
         "max_requests_per_minute": settings.self_serve_max_requests_per_minute,
         "max_monthly_budget_usd": settings.self_serve_max_monthly_budget_usd,
+        "max_keys_per_org": settings.self_serve_max_keys_per_org,
     }
 
 

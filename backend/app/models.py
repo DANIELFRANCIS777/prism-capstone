@@ -1,7 +1,18 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -30,6 +41,11 @@ class VirtualKey(Base):
     cache_similarity_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # NULL for operator-provisioned/seeded keys (data/seed_keys.json) - only
+    # self-serve-issued keys (app/self_serve_keys.py) ever set this.
+    org_id: Mapped[int | None] = mapped_column(
+        ForeignKey("organizations.id"), index=True, nullable=True
+    )
 
 
 class RequestLog(Base):
@@ -125,13 +141,71 @@ class RefreshToken(Base):
     """Server-side record of every issued refresh token, keyed by the JWT's
     `jti` claim - this is what makes refresh tokens revocable and single-use
     (rotation), which the JWT's signature and expiry alone can't provide.
-    The raw token is never stored, only its jti."""
+    The raw token is never stored, only its jti.
+
+    Shared by both the platform-operator admin login and end-user login
+    (subject_type disambiguates "admin" vs "user"; subject_id is that
+    subject's id in the corresponding table) - the single-use atomic-rotation
+    logic in app/jwt_tokens.py is identical in shape for both, so one table
+    avoids duplicating it. No FK to admin_users/users, matching this table's
+    existing FK-less convention - a subject row being deleted doesn't need to
+    cascade here, it's enough that rotate/revoke re-check the subject still
+    exists and is active."""
 
     __tablename__ = "refresh_tokens"
+    __table_args__ = (Index("ix_refresh_tokens_subject", "subject_type", "subject_id"),)
 
     jti: Mapped[str] = mapped_column(String, primary_key=True)
-    admin_user_id: Mapped[int] = mapped_column(Integer, index=True)
+    subject_type: Mapped[str] = mapped_column(String, default="admin")
+    subject_id: Mapped[int] = mapped_column(Integer)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Organization(Base):
+    """A self-serve tenant's org. Created at signup (app/routers/user.py);
+    one org per user for now (no multi-user teams yet - see ROADMAP.md)."""
+
+    __tablename__ = "organizations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class User(Base):
+    """A self-serve end user - distinct from AdminUser (the platform
+    operator). No signup route exists for AdminUser; this is the reverse:
+    the only way to create a User is /auth/signup."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    role: Mapped[str] = mapped_column(String, default="owner")
+    status: Mapped[str] = mapped_column(String, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ProviderCredential(Base):
+    """A tenant's own upstream provider API key (BYOK), encrypted at rest
+    (app/credential_crypto.py). Consulted by dispatch instead of the
+    platform's shared static config when present - see app/providers.py."""
+
+    __tablename__ = "provider_credentials"
+    __table_args__ = (
+        UniqueConstraint("org_id", "provider", name="uq_provider_credentials_org_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    provider: Mapped[str] = mapped_column(String)
+    encrypted_key: Mapped[str] = mapped_column(String)
+    key_prefix: Mapped[str] = mapped_column(String)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -39,6 +39,24 @@ class Settings(BaseSettings):
     # ops console). Simpler to hand-edit in .env than a JSON list.
     cors_allow_origins: str = "http://localhost:5173,http://localhost:4173"
 
+    # BYOK provider credentials (app/credential_crypto.py, app/provider_credentials.py).
+    credential_encryption_key_path: str = str(BACKEND_ROOT / "keys" / "credential_encryption.key")
+
+    # Self-serve tenant accounts (app/routers/user.py). The ceilings are the
+    # operator's actual cost-exposure control on a publicly reachable
+    # instance - a self-serve org can set anything at or below these, never
+    # above, and self-serve is capped at one key per org (no aggregate
+    # multi-key tracking yet - see ROADMAP.md).
+    self_serve_signup_enabled: bool = True
+    self_serve_max_requests_per_minute: int = 60
+    self_serve_max_monthly_budget_usd: float = 50.0
+    self_serve_max_keys_per_org: int = 1
+    # Whether dispatch consults an org's stored BYOK credential at all.
+    # Instantly flippable without a redeploy if something looks wrong with it -
+    # every seeded/operator-provisioned key is unaffected either way (org_id
+    # is None for those, so they never reach this path).
+    byok_dispatch_enabled: bool = True
+
     @property
     def cors_allow_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allow_origins.split(",") if origin.strip()]

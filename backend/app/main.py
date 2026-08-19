@@ -5,10 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings, validate_pricing_coverage
+from app.credential_crypto import ensure_fernet_key_exists
 from app.db import async_session
 from app.jwt_keys import ensure_keys_exist
 from app.migrate import run_migrations
-from app.routers import admin, chat
+from app.routers import admin, chat, user
 from app.seed import seed_admin_user, seed_virtual_keys
 
 
@@ -16,6 +17,7 @@ from app.seed import seed_admin_user, seed_virtual_keys
 async def lifespan(app: FastAPI):
     validate_pricing_coverage()
     ensure_keys_exist()
+    ensure_fernet_key_exists()
     if get_settings().run_migrations_on_startup:
         await run_migrations()
     async with async_session() as session:
@@ -33,6 +35,7 @@ app.add_middleware(
 )
 app.include_router(chat.router)
 app.include_router(admin.router)
+app.include_router(user.router)
 
 
 @app.exception_handler(HTTPException)

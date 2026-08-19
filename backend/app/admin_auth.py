@@ -1,4 +1,8 @@
-"""Admin login: username/password -> a JWT access + refresh token pair.
+"""Platform-operator admin login: username/password -> a JWT access + refresh
+token pair. Distinct from end-user login (app/user_auth.py) - the `scope`
+claim ("admin" here, "user" there) keeps the two kinds of token from ever
+being accepted by the other's endpoints, even though both are backed by the
+same RS256 keys and refresh-token machinery (app/jwt_tokens.py).
 
 Access tokens (30 min default) are stateless - verified purely by RS256
 signature + expiry, no DB lookup, so they stay cheap to check on every admin
@@ -13,42 +17,29 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-import jwt
 from fastapi import Header
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import jwt_tokens
 from app.auth import GatewayError, extract_bearer_token
 from app.config import get_settings
-from app.jwt_keys import load_private_key, load_public_key
-from app.models import AdminUser, RefreshToken
+from app.models import AdminUser
 
-ALGORITHM = "RS256"
+SCOPE = "admin"
 
 
 def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
-def _encode(claims: dict) -> str:
-    return jwt.encode(claims, load_private_key(), algorithm=ALGORITHM)
-
-
-def _decode(token: str) -> dict:
-    try:
-        return jwt.decode(token, load_public_key(), algorithms=[ALGORITHM])
-    except jwt.ExpiredSignatureError as exc:
-        raise GatewayError(401, "Token has expired", "authentication_error") from exc
-    except jwt.InvalidTokenError as exc:
-        raise GatewayError(401, "Invalid token", "authentication_error") from exc
-
-
 def create_access_token(user: AdminUser) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
-    return _encode({
+    return jwt_tokens.encode({
         "sub": user.username,
         "admin_user_id": user.id,
+        "scope": SCOPE,
         "type": "access",
         "iat": now,
         "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
@@ -57,21 +48,9 @@ def create_access_token(user: AdminUser) -> str:
 
 
 async def create_refresh_token(user: AdminUser, db: AsyncSession) -> str:
-    settings = get_settings()
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(days=settings.refresh_token_expire_days)
-    jti = str(uuid.uuid4())
-    token = _encode({
-        "sub": user.username,
-        "admin_user_id": user.id,
-        "type": "refresh",
-        "iat": now,
-        "exp": expires_at,
-        "jti": jti,
-    })
-    db.add(RefreshToken(jti=jti, admin_user_id=user.id, expires_at=expires_at))
-    await db.commit()
-    return token
+    return await jwt_tokens.create_refresh_token(
+        SCOPE, user.id, {"sub": user.username, "admin_user_id": user.id, "scope": SCOPE}, db
+    )
 
 
 async def issue_token_pair(user: AdminUser, db: AsyncSession) -> dict:
@@ -93,51 +72,7 @@ async def authenticate_admin(username: str, password: str, db: AsyncSession) -> 
 
 
 async def rotate_refresh_token(refresh_token: str, db: AsyncSession) -> dict:
-    """Validates, single-use-consumes, and replaces a refresh token. Reuse of
-    an already-consumed or revoked token is treated as a theft signal: every
-    other active token for that user is revoked too.
-
-    Single-use is enforced by one atomic conditional UPDATE (mirroring
-    rate_limit.py's pattern), not a SELECT-then-check-then-UPDATE - two
-    concurrent requests presenting the same token can't both read "not yet
-    used" before either commits; only one UPDATE can ever match the row."""
-    claims = _decode(refresh_token)
-    if claims.get("type") != "refresh":
-        raise GatewayError(401, "Not a refresh token", "authentication_error")
-
-    jti = claims["jti"]
-    result = await db.execute(
-        update(RefreshToken)
-        .where(
-            RefreshToken.jti == jti,
-            RefreshToken.used_at.is_(None),
-            RefreshToken.revoked_at.is_(None),
-        )
-        .values(used_at=datetime.now(timezone.utc))
-        .returning(RefreshToken.admin_user_id)
-    )
-    admin_user_id = result.scalar_one_or_none()
-    await db.commit()
-
-    if admin_user_id is None:
-        # Unknown token, or a known one that's already used/revoked. For a
-        # known token, treat reuse as a theft signal and revoke every other
-        # active token for that user.
-        existing = await db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
-        record = existing.scalar_one_or_none()
-        if record is not None:
-            await db.execute(
-                update(RefreshToken)
-                .where(
-                    RefreshToken.admin_user_id == record.admin_user_id,
-                    RefreshToken.revoked_at.is_(None),
-                )
-                .values(revoked_at=datetime.now(timezone.utc))
-            )
-            await db.commit()
-        raise GatewayError(
-            401, "Refresh token unknown, already used, or revoked", "authentication_error"
-        )
+    admin_user_id = await jwt_tokens.rotate_refresh_token(refresh_token, SCOPE, db)
 
     user_result = await db.execute(select(AdminUser).where(AdminUser.id == admin_user_id))
     user = user_result.scalar_one_or_none()
@@ -148,17 +83,7 @@ async def rotate_refresh_token(refresh_token: str, db: AsyncSession) -> dict:
 
 
 async def revoke_refresh_token(refresh_token: str, db: AsyncSession) -> None:
-    try:
-        claims = _decode(refresh_token)
-    except GatewayError:
-        return  # already invalid/expired - nothing to revoke
-    jti = claims.get("jti")
-    if not jti:
-        return
-    await db.execute(
-        update(RefreshToken).where(RefreshToken.jti == jti).values(revoked_at=datetime.now(timezone.utc))
-    )
-    await db.commit()
+    await jwt_tokens.revoke_refresh_token(refresh_token, db)
 
 
 async def require_admin_jwt(authorization: str | None = Header(default=None)) -> dict:
@@ -166,7 +91,9 @@ async def require_admin_jwt(authorization: str | None = Header(default=None)) ->
     themselves and /health). Purely stateless - signature + expiry only, no
     DB round trip - so it stays cheap on every admin request."""
     token = extract_bearer_token(authorization)
-    claims = _decode(token)
+    claims = jwt_tokens.decode(token)
     if claims.get("type") != "access":
         raise GatewayError(401, "Not an access token", "authentication_error")
+    if claims.get("scope") != SCOPE:
+        raise GatewayError(401, "Not an admin token", "authentication_error")
     return claims

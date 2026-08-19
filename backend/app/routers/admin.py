@@ -13,7 +13,7 @@ from app.admin_auth import (
     rotate_refresh_token,
 )
 from app.db import get_db
-from app.models import RequestLog
+from app.models import RequestLog, VirtualKey
 
 router = APIRouter()
 
@@ -119,6 +119,24 @@ async def recent_logs(
             "created_at": r.created_at.isoformat(),
         }
         for r in rows
+    ]
+
+
+@router.get("/admin/keys", dependencies=[Depends(require_admin_jwt)])
+async def list_keys(db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(select(VirtualKey).order_by(VirtualKey.created_at))).scalars().all()
+    return [
+        {
+            "id": k.id,
+            "team": k.team,
+            "key_prefix": k.key_prefix,
+            "org_id": k.org_id,
+            "status": k.status,
+            "requests_per_minute": k.requests_per_minute,
+            "monthly_budget_usd": float(k.monthly_budget_usd),
+            "created_at": k.created_at.isoformat(),
+        }
+        for k in rows
     ]
 
 

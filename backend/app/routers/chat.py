@@ -8,6 +8,7 @@ from app.budget import current_year_month, enforce_budget, record_usage
 from app.cache import find_cache_hit, record_cache_hit, store_cache_entry
 from app.config import get_settings
 from app.db import get_db
+from app.provider_credentials import load_org_provider_credentials
 from app.rate_limit import enforce_rate_limit
 from app.request_log import log_request
 from app.routing.aliases import RouteNotImplementedError, UnknownModelError
@@ -96,6 +97,10 @@ async def chat_completions(
 
     settings = get_settings()
 
+    provider_credentials = None
+    if settings.byok_dispatch_enabled and key.org_id is not None:
+        provider_credentials = await load_org_provider_credentials(db, key.org_id)
+
     # Cache lookup: non-streaming only (documented simplification - see
     # docs/IMPLEMENTATION_GUIDE.md FAQ on streaming + cache). Scoped per key,
     # keyed by the literal requested alias/model, never shared across tenants.
@@ -125,7 +130,9 @@ async def chat_completions(
 
     if stream:
         try:
-            handle = await dispatch_streaming(chain, messages, settings.upstream_timeout_seconds)
+            handle = await dispatch_streaming(
+                chain, messages, settings.upstream_timeout_seconds, provider_credentials
+            )
         except UpstreamError as exc:
             await log_request(
                 db, virtual_key_id=key.id, requested_model=requested_model,
@@ -146,7 +153,9 @@ async def chat_completions(
         )
 
     try:
-        result = await dispatch_non_streaming(chain, messages, settings.upstream_timeout_seconds)
+        result = await dispatch_non_streaming(
+            chain, messages, settings.upstream_timeout_seconds, provider_credentials
+        )
     except UpstreamError as exc:
         await log_request(
             db, virtual_key_id=key.id, requested_model=requested_model,

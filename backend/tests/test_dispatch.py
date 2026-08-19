@@ -27,7 +27,9 @@ async def test_stream_that_closes_with_zero_lines_fails_over(monkeypatch):
     a *successful* open instead of being retried/failed over to the next
     candidate in the chain."""
     adapters = {"empty": _EmptyStreamAdapter(), "working": _WorkingStreamAdapter()}
-    monkeypatch.setattr("app.routing.dispatch.get_provider", lambda name: adapters[name])
+    monkeypatch.setattr(
+        "app.routing.dispatch.get_provider", lambda name, api_key_override=None: adapters[name]
+    )
     monkeypatch.setattr(
         "app.routing.dispatch.retry_policy",
         lambda: {"max_attempts": 1, "initial_backoff_ms": 1, "backoff_multiplier": 1},

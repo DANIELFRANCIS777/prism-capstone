@@ -16,5 +16,15 @@ def provider_registry() -> dict[str, ProviderAdapter]:
     }
 
 
-def get_provider(name: str) -> ProviderAdapter:
-    return provider_registry()[name]
+def get_provider(name: str, api_key_override: str | None = None) -> ProviderAdapter:
+    """api_key_override lets a tenant's own BYOK credential (app/
+    provider_credentials.py) stand in for the platform's shared static key
+    for this one call, without touching the cached registry every other
+    caller uses. Building a fresh adapter here costs nothing extra:
+    OpenAICompatibleAdapter already opens a new httpx.AsyncClient per call
+    (see adapters/openai_compatible.py), so there's no pooled connection to
+    lose by not reusing the cached instance."""
+    base = provider_registry()[name]
+    if api_key_override is None:
+        return base
+    return OpenAICompatibleAdapter(name=base.name, base_url=base.base_url, api_key=api_key_override)

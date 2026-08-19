@@ -59,12 +59,26 @@ def _upgrade(connection) -> None:
 
 
 async def run_migrations() -> None:
-    async with engine.begin() as connection:
+    """pg_advisory_lock (not the _xact_ variant) is session-scoped, not
+    transaction-scoped - a ROLLBACK does not release it. So the lock/unlock
+    each need their own clean transaction: if a migration fails mid-DDL, the
+    connection's transaction is aborted and no further statement (including
+    the unlock) can run on it until that's rolled back - do that first, or
+    the unlock fails too and replaces the real error with a confusing
+    "transaction aborted" one, while leaving the lock stuck on this pooled
+    connection until it's closed."""
+    async with engine.connect() as connection:
         await connection.execute(text("SELECT pg_advisory_lock(:id)"), {"id": _MIGRATION_LOCK_ID})
+        await connection.commit()
         try:
             await connection.run_sync(_upgrade)
+            await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
         finally:
             await connection.execute(
                 text("SELECT pg_advisory_unlock(:id)"), {"id": _MIGRATION_LOCK_ID}
             )
+            await connection.commit()
     logger.info("database schema is up to date")

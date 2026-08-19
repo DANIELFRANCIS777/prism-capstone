@@ -9,6 +9,7 @@ from app.semantic import cosine_similarity, term_frequency
 # Cache key granularity: the last user message only (documented choice - see
 # docs/IMPLEMENTATION_GUIDE.md FAQ on multi-turn cache keys). All graded
 # paraphrase pairs are single-turn, so this doesn't affect their outcome.
+# Scoped by virtual_key_id (the tenant), never shared across tenants.
 
 
 def _prompt_text(messages: list[dict]) -> str:
@@ -20,7 +21,7 @@ def _prompt_text(messages: list[dict]) -> str:
 
 async def find_cache_hit(
     db: AsyncSession,
-    virtual_key: str,
+    virtual_key_id: int,
     requested_model: str,
     messages: list[dict],
     threshold: float | None,
@@ -38,7 +39,7 @@ async def find_cache_hit(
 
     result = await db.execute(
         select(CacheEntry).where(
-            CacheEntry.virtual_key == virtual_key, CacheEntry.model == requested_model
+            CacheEntry.virtual_key_id == virtual_key_id, CacheEntry.model == requested_model
         )
     )
     best_entry, best_score = None, 0.0
@@ -52,7 +53,7 @@ async def find_cache_hit(
 
 async def store_cache_entry(
     db: AsyncSession,
-    virtual_key: str,
+    virtual_key_id: int,
     requested_model: str,
     messages: list[dict],
     response_body: dict,
@@ -65,7 +66,7 @@ async def store_cache_entry(
         return
     db.add(
         CacheEntry(
-            virtual_key=virtual_key,
+            virtual_key_id=virtual_key_id,
             model=requested_model,
             prompt_text=prompt_text,
             token_counts=dict(vector),

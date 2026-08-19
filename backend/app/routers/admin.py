@@ -57,12 +57,12 @@ async def logout(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/admin/usage", dependencies=[Depends(require_admin_jwt)])
 async def usage_summary(
-    key: str,
+    key_id: int,
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    conditions = [RequestLog.virtual_key == key]
+    conditions = [RequestLog.virtual_key_id == key_id]
     if from_:
         conditions.append(RequestLog.created_at >= datetime.fromisoformat(from_))
     if to:
@@ -78,7 +78,7 @@ async def usage_summary(
 
     row = (await db.execute(stmt)).one()
     return {
-        "key": key,
+        "key_id": key_id,
         "from": from_,
         "to": to,
         "requests": row.requests,
@@ -91,19 +91,19 @@ async def usage_summary(
 
 @router.get("/admin/logs", dependencies=[Depends(require_admin_jwt)])
 async def recent_logs(
-    key: str | None = None,
+    key_id: int | None = None,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(RequestLog).order_by(RequestLog.created_at.desc()).limit(limit)
-    if key:
-        stmt = stmt.where(RequestLog.virtual_key == key)
+    if key_id:
+        stmt = stmt.where(RequestLog.virtual_key_id == key_id)
 
     rows = (await db.execute(stmt)).scalars().all()
     return [
         {
             "request_id": r.request_id,
-            "virtual_key": r.virtual_key,
+            "virtual_key_id": r.virtual_key_id,
             "requested_model": r.requested_model,
             "resolved_provider": r.resolved_provider,
             "resolved_model": r.resolved_model,
@@ -123,10 +123,10 @@ async def recent_logs(
 
 
 @router.get("/admin/cache/stats", dependencies=[Depends(require_admin_jwt)])
-async def cache_stats(key: str | None = None, db: AsyncSession = Depends(get_db)):
+async def cache_stats(key_id: int | None = None, db: AsyncSession = Depends(get_db)):
     conditions = [RequestLog.status == "ok"]
-    if key:
-        conditions.append(RequestLog.virtual_key == key)
+    if key_id:
+        conditions.append(RequestLog.virtual_key_id == key_id)
 
     stmt = select(
         func.count(RequestLog.id).filter(RequestLog.cache == "hit").label("hits"),
@@ -136,7 +136,7 @@ async def cache_stats(key: str | None = None, db: AsyncSession = Depends(get_db)
     row = (await db.execute(stmt)).one()
     total = row.hits + row.misses
     return {
-        "key": key,
+        "key_id": key_id,
         "hits": row.hits,
         "misses": row.misses,
         "hit_rate": round(row.hits / total, 4) if total else 0.0,

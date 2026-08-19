@@ -15,10 +15,10 @@ async def enforce_rate_limit(db: AsyncSession, key: VirtualKey) -> None:
     window_start = now - (now % 60)
 
     stmt = pg_insert(RateLimitWindow).values(
-        virtual_key=key.virtual_key, window_start=window_start, count=1
+        virtual_key_id=key.id, window_start=window_start, count=1
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[RateLimitWindow.virtual_key, RateLimitWindow.window_start],
+        index_elements=[RateLimitWindow.virtual_key_id, RateLimitWindow.window_start],
         set_={"count": RateLimitWindow.count + 1},
     ).returning(RateLimitWindow.count)
 

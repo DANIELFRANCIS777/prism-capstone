@@ -13,7 +13,8 @@
     { "key": "search_key", "value": "prism-sk-search-1a2b3c" },
     { "key": "research_key", "value": "prism-sk-research-4d5e6f" },
     { "key": "free_key", "value": "prism-sk-free-7g8h9i" },
-    { "key": "budget_demo_key", "value": "prism-sk-budget-demo-0j1k2l" }
+    { "key": "budget_demo_key", "value": "prism-sk-budget-demo-0j1k2l" },
+    { "key": "search_key_id", "value": "", "description": "Numeric virtual_keys.id for the search tenant - look it up via GET /admin/keys (keys are now referenced by id, not the raw secret)." }
   ],
   "item": [
     {
@@ -254,11 +255,11 @@
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
             "url": {
-              "raw": "{{base_url}}/admin/usage?key={{search_key}}",
+              "raw": "{{base_url}}/admin/usage?key_id={{search_key_id}}",
               "host": ["{{base_url}}"],
               "path": ["admin", "usage"],
               "query": [
-                { "key": "key", "value": "{{search_key}}" },
+                { "key": "key_id", "value": "{{search_key_id}}" },
                 { "key": "from", "value": "2026-07-01", "disabled": true },
                 { "key": "to", "value": "2026-07-31", "disabled": true }
               ]
@@ -275,7 +276,7 @@
               "host": ["{{base_url}}"],
               "path": ["admin", "logs"],
               "query": [
-                { "key": "key", "value": "{{search_key}}", "disabled": true },
+                { "key": "key_id", "value": "{{search_key_id}}", "disabled": true },
                 { "key": "limit", "value": "20" }
               ]
             }
@@ -290,7 +291,7 @@
               "raw": "{{base_url}}/admin/cache/stats",
               "host": ["{{base_url}}"],
               "path": ["admin", "cache", "stats"],
-              "query": [{ "key": "key", "value": "{{search_key}}", "disabled": true }]
+              "query": [{ "key": "key_id", "value": "{{search_key_id}}", "disabled": true }]
             }
           }
         }

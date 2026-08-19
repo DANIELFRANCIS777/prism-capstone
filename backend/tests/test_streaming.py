@@ -35,7 +35,7 @@ async def test_client_disconnect_mid_stream_still_bills_and_logs(db):
     Usage is parsed from a line *before* it's yielded, specifically so a
     disconnect that happens exactly during the yield of the final,
     usage-bearing chunk still gets it captured."""
-    key = make_virtual_key(virtual_key=f"test-stream-disconnect-{uuid.uuid4().hex[:8]}")
+    key = make_virtual_key(raw_key=f"test-stream-disconnect-{uuid.uuid4().hex[:8]}")
     db.add(key)
     await db.commit()
 
@@ -56,7 +56,7 @@ async def test_client_disconnect_mid_stream_still_bills_and_logs(db):
     await gen.__anext__()  # ...and the usage-bearing chunk (usage now captured)...
     await gen.aclose()  # ...then disconnects before [DONE] arrives
 
-    result = await db.execute(select(RequestLog).where(RequestLog.virtual_key == key.virtual_key))
+    result = await db.execute(select(RequestLog).where(RequestLog.virtual_key_id == key.id))
     rows = result.scalars().all()
     assert len(rows) == 1
     assert rows[0].status == "client_disconnected"
@@ -69,7 +69,7 @@ async def test_stream_that_completes_normally_still_logs_ok(db):
     """Sanity check alongside the disconnect test above: the normal
     completion path (client stays connected through [DONE]) is unaffected
     by the disconnect-handling changes."""
-    key = make_virtual_key(virtual_key=f"test-stream-ok-{uuid.uuid4().hex[:8]}")
+    key = make_virtual_key(raw_key=f"test-stream-ok-{uuid.uuid4().hex[:8]}")
     db.add(key)
     await db.commit()
 
@@ -88,7 +88,7 @@ async def test_stream_that_completes_normally_still_logs_ok(db):
     chunks = [chunk async for chunk in forward_stream(db, key, "fast", handle)]
     assert any(b"[DONE]" in c for c in chunks)
 
-    result = await db.execute(select(RequestLog).where(RequestLog.virtual_key == key.virtual_key))
+    result = await db.execute(select(RequestLog).where(RequestLog.virtual_key_id == key.id))
     rows = result.scalars().all()
     assert len(rows) == 1
     assert rows[0].status == "ok"

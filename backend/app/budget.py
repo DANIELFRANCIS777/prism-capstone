@@ -22,7 +22,7 @@ async def enforce_budget(db: AsyncSession, key: VirtualKey, year_month: str) -> 
     spend slightly over - documented per docs/DATA_MODEL.md."""
     result = await db.execute(
         select(UsageRecord.spend_usd).where(
-            UsageRecord.virtual_key == key.virtual_key, UsageRecord.year_month == year_month
+            UsageRecord.virtual_key_id == key.id, UsageRecord.year_month == year_month
         )
     )
     spend = result.scalar_one_or_none() or 0
@@ -45,7 +45,7 @@ async def record_usage(
 ) -> None:
     """Atomic upsert-increment - two concurrent requests both get counted."""
     stmt = pg_insert(UsageRecord).values(
-        virtual_key=key.virtual_key,
+        virtual_key_id=key.id,
         year_month=year_month,
         spend_usd=cost_usd,
         prompt_tokens=prompt_tokens,
@@ -54,7 +54,7 @@ async def record_usage(
         cache_hits=1 if cache_hit else 0,
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[UsageRecord.virtual_key, UsageRecord.year_month],
+        index_elements=[UsageRecord.virtual_key_id, UsageRecord.year_month],
         set_={
             "spend_usd": UsageRecord.spend_usd + stmt.excluded.spend_usd,
             "prompt_tokens": UsageRecord.prompt_tokens + stmt.excluded.prompt_tokens,

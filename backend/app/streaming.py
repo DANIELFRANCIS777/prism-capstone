@@ -94,7 +94,7 @@ async def forward_stream(
             await record_usage(db, key, current_year_month(), cost_usd, prompt_tokens, completion_tokens)
         await log_request(
             db,
-            virtual_key=key.virtual_key,
+            virtual_key_id=key.id,
             requested_model=requested_model,
             resolved_provider=handle.route.provider_name,
             resolved_model=handle.route.model,
@@ -113,7 +113,7 @@ async def forward_stream(
     await record_usage(db, key, current_year_month(), cost_usd, prompt_tokens, completion_tokens)
     await log_request(
         db,
-        virtual_key=key.virtual_key,
+        virtual_key_id=key.id,
         requested_model=requested_model,
         resolved_provider=handle.route.provider_name,
         resolved_model=handle.route.model,

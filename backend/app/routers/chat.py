@@ -22,7 +22,7 @@ router = APIRouter()
 async def _log_rejection(
     db: AsyncSession,
     status: str,
-    virtual_key: str = "",
+    virtual_key_id: int | None = None,
     requested_model: str = "",
     route_reason: str | None = None,
 ) -> None:
@@ -30,7 +30,7 @@ async def _log_rejection(
     request, including rejections.'"""
     await log_request(
         db,
-        virtual_key=virtual_key,
+        virtual_key_id=virtual_key_id,
         requested_model=requested_model,
         status=status,
         route_reason=route_reason,
@@ -52,7 +52,7 @@ async def chat_completions(
     try:
         body = await request.json()
     except ValueError as exc:
-        await _log_rejection(db, "rejected_invalid_request", key.virtual_key)
+        await _log_rejection(db, "rejected_invalid_request", key.id)
         raise GatewayError(400, "Request body is not valid JSON", "invalid_request_error") from exc
 
     requested_model = body.get("model")
@@ -60,38 +60,38 @@ async def chat_completions(
     stream = bool(body.get("stream"))
 
     if not requested_model:
-        await _log_rejection(db, "rejected_invalid_request", key.virtual_key)
+        await _log_rejection(db, "rejected_invalid_request", key.id)
         raise GatewayError(400, "'model' is required", "invalid_request_error")
     if not isinstance(messages, list) or not messages:
-        await _log_rejection(db, "rejected_invalid_request", key.virtual_key, requested_model)
+        await _log_rejection(db, "rejected_invalid_request", key.id, requested_model)
         raise GatewayError(400, "'messages' must be a non-empty list", "invalid_request_error")
 
     try:
         chain, route_reason = resolve_route(requested_model, messages)
     except UnknownModelError as exc:
-        await _log_rejection(db, "rejected_not_found", key.virtual_key, requested_model)
+        await _log_rejection(db, "rejected_not_found", key.id, requested_model)
         raise GatewayError(404, str(exc), "not_found_error") from exc
     except RouteNotImplementedError as exc:
-        await _log_rejection(db, "rejected_not_implemented", key.virtual_key, requested_model)
+        await _log_rejection(db, "rejected_not_implemented", key.id, requested_model)
         raise GatewayError(501, str(exc), "not_implemented_error") from exc
 
     try:
         enforce_allowlist(key, requested_model)
     except GatewayError as exc:
-        await _log_rejection(db, "rejected_allowlist", key.virtual_key, requested_model, route_reason)
+        await _log_rejection(db, "rejected_allowlist", key.id, requested_model, route_reason)
         raise exc
 
     try:
         await enforce_rate_limit(db, key)
     except GatewayError as exc:
-        await _log_rejection(db, "rejected_rate_limit", key.virtual_key, requested_model, route_reason)
+        await _log_rejection(db, "rejected_rate_limit", key.id, requested_model, route_reason)
         raise exc
 
     year_month = current_year_month()
     try:
         await enforce_budget(db, key, year_month)
     except GatewayError as exc:
-        await _log_rejection(db, "rejected_budget", key.virtual_key, requested_model, route_reason)
+        await _log_rejection(db, "rejected_budget", key.id, requested_model, route_reason)
         raise exc
 
     settings = get_settings()
@@ -101,13 +101,13 @@ async def chat_completions(
     # keyed by the literal requested alias/model, never shared across tenants.
     if not stream and key.cache_enabled:
         cached = await find_cache_hit(
-            db, key.virtual_key, requested_model, messages, key.cache_similarity_threshold
+            db, key.id, requested_model, messages, key.cache_similarity_threshold
         )
         if cached is not None:
             await record_cache_hit(db, cached)
             await log_request(
                 db,
-                virtual_key=key.virtual_key,
+                virtual_key_id=key.id,
                 requested_model=requested_model,
                 resolved_provider=cached.resolved_provider,
                 resolved_model=cached.resolved_model,
@@ -128,7 +128,7 @@ async def chat_completions(
             handle = await dispatch_streaming(chain, messages, settings.upstream_timeout_seconds)
         except UpstreamError as exc:
             await log_request(
-                db, virtual_key=key.virtual_key, requested_model=requested_model,
+                db, virtual_key_id=key.id, requested_model=requested_model,
                 status="upstream_error", retries=getattr(exc, "retries", 0),
                 route_reason=route_reason,
             )
@@ -149,7 +149,7 @@ async def chat_completions(
         result = await dispatch_non_streaming(chain, messages, settings.upstream_timeout_seconds)
     except UpstreamError as exc:
         await log_request(
-            db, virtual_key=key.virtual_key, requested_model=requested_model,
+            db, virtual_key_id=key.id, requested_model=requested_model,
             status="upstream_error", retries=getattr(exc, "retries", 0),
             route_reason=route_reason,
         )
@@ -162,14 +162,14 @@ async def chat_completions(
 
     if key.cache_enabled:
         await store_cache_entry(
-            db, key.virtual_key, requested_model, messages, result.body,
+            db, key.id, requested_model, messages, result.body,
             result.route.provider_name, result.route.model,
         )
 
     await record_usage(db, key, year_month, cost_usd, prompt_tokens, completion_tokens)
     await log_request(
         db,
-        virtual_key=key.virtual_key,
+        virtual_key_id=key.id,
         requested_model=requested_model,
         resolved_provider=result.route.provider_name,
         resolved_model=result.route.model,

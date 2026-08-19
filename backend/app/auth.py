@@ -1,8 +1,17 @@
+import hashlib
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import VirtualKey
+
+
+def hash_virtual_key(raw: str) -> str:
+    """Canonical hash for virtual-key storage/lookup - the raw value is never
+    stored past issuance. Used here, by seed.py, and by self-serve key
+    issuance, so there is exactly one place the algorithm can drift."""
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 class GatewayError(HTTPException):
@@ -29,7 +38,7 @@ async def authenticate(authorization: str | None, db: AsyncSession) -> VirtualKe
     """Plain function (not a FastAPI dependency) so callers can catch the
     failure and log the rejected request before re-raising it."""
     token = extract_bearer_token(authorization)
-    result = await db.execute(select(VirtualKey).where(VirtualKey.virtual_key == token))
+    result = await db.execute(select(VirtualKey).where(VirtualKey.key_hash == hash_virtual_key(token)))
     key = result.scalar_one_or_none()
     if key is None or key.status != "active":
         raise GatewayError(401, "Invalid or inactive virtual key", "authentication_error")

@@ -2,6 +2,7 @@ import bcrypt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import hash_virtual_key
 from app.config import get_settings, load_seed_keys
 from app.models import AdminUser, VirtualKey
 
@@ -9,9 +10,8 @@ from app.models import AdminUser, VirtualKey
 async def seed_virtual_keys(session: AsyncSession) -> None:
     """Upsert tenants from data/seed_keys.json. Preserves seed key values on rerun."""
     for tenant in load_seed_keys():
-        result = await session.execute(
-            select(VirtualKey).where(VirtualKey.virtual_key == tenant["virtual_key"])
-        )
+        key_hash = hash_virtual_key(tenant["virtual_key"])
+        result = await session.execute(select(VirtualKey).where(VirtualKey.key_hash == key_hash))
         row = result.scalar_one_or_none()
         cache_cfg = tenant["semantic_cache"]
         fields = dict(
@@ -24,7 +24,11 @@ async def seed_virtual_keys(session: AsyncSession) -> None:
             cache_similarity_threshold=cache_cfg.get("similarity_threshold"),
         )
         if row is None:
-            session.add(VirtualKey(virtual_key=tenant["virtual_key"], **fields))
+            session.add(
+                VirtualKey(
+                    key_hash=key_hash, key_prefix=tenant["virtual_key"][:12], **fields
+                )
+            )
         else:
             for key, value in fields.items():
                 setattr(row, key, value)

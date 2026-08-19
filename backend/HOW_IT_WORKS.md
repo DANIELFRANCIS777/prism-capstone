@@ -158,7 +158,7 @@ goes unrecorded, including rejections.
 `virtual_keys` table.
 **Why:** Every caller must be a known, active tenant — this is how spend and traffic
 get attributed to a team, and how a stolen/typo'd key gets rejected immediately.
-**How:** A single `SELECT` against `virtual_keys` by the `virtual_key` column (it's
+**How:** A single `SELECT` against `virtual_keys` by the `key_hash` column (it's
 indexed, so this is fast). If the key doesn't exist or its `status` isn't `"active"`,
 raise a `GatewayError(401, ...)`.
 
@@ -196,7 +196,7 @@ that under *concurrent* traffic, exactly N requests get admitted per window, nev
 N+1.
 **How, in plain terms:** every request does one atomic
 "increment-the-counter-and-tell-me-the-new-value" database operation against a
-`rate_limit_windows` row keyed by `(virtual_key, window_start)`. Because Postgres
+`rate_limit_windows` row keyed by `(virtual_key_id, window_start)`. Because Postgres
 processes that single statement as one atomic unit, two requests arriving at the exact
 same instant still get *different* counter values back (e.g. one gets `10`, the other
 gets `11`) — there's no gap where both could "read count=9, then both write count=10."
@@ -208,7 +208,7 @@ That's what makes it safe under real concurrency instead of just in testing.
 **Why:** Lets a team cap their own spend (and lets you demo hitting a budget limit
 live, per the capstone's demo script).
 **How:** This is a **cheap read**, not a scan of every past request: there's a
-separate `usage_records` table with one row per `(virtual_key, year_month)` holding a
+separate `usage_records` table with one row per `(virtual_key_id, year_month)` holding a
 running `spend_usd` total. The check is just "is `spend_usd >= monthly_budget_usd`?".
 The actual cost of *this* request isn't known yet (the provider hasn't answered), so
 this is admission control only — after the provider responds, `record_usage()` does
@@ -227,7 +227,7 @@ instead of calling a provider at all.
 provider ten times for near-identical answers.
 **Why scoped per key?** Serving Team A's cached answer to Team B would leak Team A's
 traffic content across a tenant boundary — treated as a data leak per the spec, so
-cache entries are always looked up filtered by `virtual_key`.
+cache entries are always looked up filtered by `virtual_key_id`.
 **Why not for streaming?** A streamed response's cost/shape is different from a
 non-streaming one, and replaying a cached answer as a fake stream adds real
 complexity for a Must Have feature — the project's documented choice was to skip the
@@ -383,14 +383,14 @@ you can always see why a given call landed where it did.
 ### 6.8 Request logging & admin APIs
 Every single call into the pipeline — successful, cached, or rejected at any step —
 writes exactly one row to `request_logs` (`app/request_log.py`). That table is the
-audit trail: `virtual_key`, what was requested vs. what actually served it, `status`
+audit trail: `virtual_key_id`, what was requested vs. what actually served it, `status`
 (`ok`, `rejected_rate_limit`, `upstream_error`, ...), token counts, cost, whether it
 was a cache hit, whether it was a fallback, how many retries it took, and latency.
 
 `app/routers/admin.py` exposes three read-only views over that same table:
-- `GET /admin/usage?key=...` — sums cost/tokens/requests, optionally over a date
+- `GET /admin/usage?key_id=...` — sums cost/tokens/requests, optionally over a date
   range.
-- `GET /admin/logs?key=...&limit=...` — the raw recent rows, newest first.
+- `GET /admin/logs?key_id=...&limit=...` — the raw recent rows, newest first.
 - `GET /admin/cache/stats` — hit/miss counts and hit rate.
 
 All three require a valid admin **access token** (`Authorization: Bearer <access_token>`,
@@ -494,6 +494,6 @@ When `uvicorn app.main:app` starts:
 | Cache hit when it shouldn't (or vice versa) | `app/semantic.py` (the similarity math), `data/seed_keys.json` (the threshold) |
 | `auto` picked the wrong tier | `app/routing/auto_router.py`, run `python3 scripts/routing_eval.py` |
 | Cost/usage numbers look wrong | `app/routing/pricing.py`, `data/model_pricing.json` |
-| Need to see exactly what happened for a request | `GET /admin/logs?key=...` |
+| Need to see exactly what happened for a request | `GET /admin/logs?key_id=...` |
 | Admin login/token issues (401 on `/admin/*`, refresh rejected) | `app/admin_auth.py`; check the token's `type` claim matches what the endpoint expects (`access` vs `refresh`) and that it hasn't expired |
 | "Refresh token already used or revoked" unexpectedly | Someone (or some client) already called `/admin/auth/refresh` with that token — see the rotation/reuse-detection explanation in 6.9; just log in again |

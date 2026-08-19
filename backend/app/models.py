@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, Numeric, String
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -17,7 +17,10 @@ class VirtualKey(Base):
     __tablename__ = "virtual_keys"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    virtual_key: Mapped[str] = mapped_column(String, unique=True, index=True)
+    # sha256 hex of the raw bearer token - the raw value is never stored past
+    # issuance. key_prefix is a display-only slice for admin/self-serve UIs.
+    key_hash: Mapped[str] = mapped_column(String, unique=True, index=True)
+    key_prefix: Mapped[str] = mapped_column(String)
     team: Mapped[str] = mapped_column(String)
     monthly_budget_usd: Mapped[float] = mapped_column(Numeric(14, 6))
     requests_per_minute: Mapped[int] = mapped_column(Integer)
@@ -38,7 +41,12 @@ class RequestLog(Base):
     request_id: Mapped[str] = mapped_column(
         String, unique=True, index=True, default=lambda: str(uuid.uuid4())
     )
-    virtual_key: Mapped[str] = mapped_column(String, index=True)
+    # Nullable: a request rejected before authentication resolves (bad/missing
+    # bearer token) never identifies a real key - see routers/chat.py's
+    # rejected_auth path.
+    virtual_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("virtual_keys.id"), index=True, nullable=True
+    )
     requested_model: Mapped[str] = mapped_column(String)
     resolved_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     resolved_model: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -60,7 +68,7 @@ class RateLimitWindow(Base):
 
     __tablename__ = "rate_limit_windows"
 
-    virtual_key: Mapped[str] = mapped_column(String, primary_key=True)
+    virtual_key_id: Mapped[int] = mapped_column(ForeignKey("virtual_keys.id"), primary_key=True)
     window_start: Mapped[int] = mapped_column(Integer, primary_key=True)  # unix seconds, floored to 60
     count: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -72,7 +80,7 @@ class UsageRecord(Base):
 
     __tablename__ = "usage_records"
 
-    virtual_key: Mapped[str] = mapped_column(String, primary_key=True)
+    virtual_key_id: Mapped[int] = mapped_column(ForeignKey("virtual_keys.id"), primary_key=True)
     year_month: Mapped[str] = mapped_column(String, primary_key=True)  # "YYYY-MM"
     spend_usd: Mapped[float] = mapped_column(Numeric(14, 6), default=0)
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
@@ -89,7 +97,7 @@ class CacheEntry(Base):
     __tablename__ = "cache_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    virtual_key: Mapped[str] = mapped_column(String, index=True)
+    virtual_key_id: Mapped[int] = mapped_column(ForeignKey("virtual_keys.id"), index=True)
     model: Mapped[str] = mapped_column(String)
     prompt_text: Mapped[str] = mapped_column(String)
     token_counts: Mapped[dict] = mapped_column(JSON)

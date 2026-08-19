@@ -17,6 +17,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.auth import hash_virtual_key
 from app.config import get_settings
 from app.db import engine as app_engine
 from app.jwt_keys import ensure_keys_exist
@@ -28,12 +29,16 @@ from app.models import VirtualKey
 ensure_keys_exist()
 
 
-def make_virtual_key(**overrides) -> VirtualKey:
-    """Shared VirtualKey factory for tests - a unique virtual_key per call
-    (tests that persist it need that), with sensible defaults callers can
-    override piecemeal."""
+def make_virtual_key(raw_key: str | None = None, **overrides) -> VirtualKey:
+    """Shared VirtualKey factory for tests - a unique key per call (tests that
+    persist it need that), with sensible defaults callers can override
+    piecemeal. Only key_hash/key_prefix are ever persisted; the raw value
+    (needed by auth-path tests) is returned as VirtualKey.raw_key, a plain
+    Python attribute with no DB column behind it."""
+    raw_key = raw_key or f"test-{uuid.uuid4().hex[:8]}"
     fields = dict(
-        virtual_key=f"test-{uuid.uuid4().hex[:8]}",
+        key_hash=hash_virtual_key(raw_key),
+        key_prefix=raw_key[:12],
         team="test",
         monthly_budget_usd=100,
         requests_per_minute=10,
@@ -41,7 +46,9 @@ def make_virtual_key(**overrides) -> VirtualKey:
         status="active",
     )
     fields.update(overrides)
-    return VirtualKey(**fields)
+    key = VirtualKey(**fields)
+    key.raw_key = raw_key
+    return key
 
 
 @pytest.fixture(scope="session")

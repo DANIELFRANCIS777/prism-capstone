@@ -37,3 +37,15 @@ def test_scaffolding_and_stop_words_are_filtered_out():
     assert "what" not in tokens
     assert "steps" not in tokens
     assert "the" not in tokens
+
+
+def test_contraction_scores_identically_to_its_uncontracted_form():
+    """Regression test: _TOKEN_RE has no apostrophe in its character class,
+    so "what's" splits into "what" (a stopword) + a spurious leftover "s"
+    token that used to survive filtering and dilute the score against the
+    uncontracted phrasing - 0.816 instead of ~1.0, below every configured
+    cache threshold. A tenant asking the identical question with a
+    contraction should not pay for a fresh upstream call."""
+    a = term_frequency("What is a message queue?")
+    b = term_frequency("What's a message queue?")
+    assert cosine_similarity(a, b) == pytest.approx(1.0)

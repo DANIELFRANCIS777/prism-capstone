@@ -6,7 +6,7 @@ import { userApi } from '../../api'
 // There's no public endpoint exposing configured provider names yet - if
 // providers become operator-editable (ROADMAP.md Phase 3), this should read
 // from that instead of being hardcoded here.
-const KNOWN_PROVIDERS = ['alpha', 'beta']
+const KNOWN_PROVIDERS = ['alpha', 'beta', 'groq', 'gemini']
 
 export default function CredentialsPanel() {
   const { authFetch } = useUserAuth()

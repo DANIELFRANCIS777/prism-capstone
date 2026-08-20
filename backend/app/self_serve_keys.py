@@ -13,13 +13,23 @@ def generate_virtual_key() -> str:
 
 
 def _validate_model_allowlist(model_allowlist: list[str] | None) -> list[str]:
-    """Full access (every alias) is the default per the confirmed decision -
-    there's no reserved/premium tier. Still validate any explicit list names
-    only real aliases/models, so a self-serve key can't be created pointing
-    at something that will 404 on every request."""
-    if not model_allowlist:
-        return list(load_gateway_config()["model_aliases"].keys())
+    """Full access is the default per the confirmed decision - there's no
+    reserved/premium tier. That means every alias (fast/smart/auto/groq/
+    gemini/...) AND every literal model name any provider registers
+    (config/gateway_config.json's providers[].models[]) - not just the
+    alias's single hardcoded primary. A BYOK provider often serves more
+    models than the one alias picked as a default (e.g. groq's alias points
+    at one model, but a tenant with their own Groq key can address any
+    model Groq hosts by passing its exact name in "model", same as calling
+    Groq directly) - restricting the default to aliases-only would make
+    that literal-name addressing dead on arrival for every new key.
+
+    Still validate any explicit list names only real aliases/models, so a
+    self-serve key can't be created pointing at something that will 404 on
+    every request."""
     known = set(load_gateway_config()["model_aliases"]) | set(model_provider_map())
+    if not model_allowlist:
+        return sorted(known)
     unknown = [m for m in model_allowlist if m not in known]
     if unknown:
         raise GatewayError(
@@ -55,8 +65,15 @@ async def create_key(
             "invalid_request_error",
         )
 
+    # Only active keys count against the cap - otherwise disabling your only
+    # key permanently locks you out of ever creating another one, since the
+    # disabled row would count against the limit forever with no way to
+    # delete it (there's no DELETE /me/keys endpoint, by design - disabling
+    # is meant to be the retire-and-replace path).
     existing = await db.execute(
-        select(func.count(VirtualKey.id)).where(VirtualKey.org_id == org_id)
+        select(func.count(VirtualKey.id)).where(
+            VirtualKey.org_id == org_id, VirtualKey.status == "active"
+        )
     )
     if existing.scalar_one() >= settings.self_serve_max_keys_per_org:
         raise GatewayError(
@@ -77,6 +94,12 @@ async def create_key(
         requests_per_minute=requests_per_minute,
         model_allowlist=allowlist,
         cache_enabled=True,
+        # Required alongside cache_enabled - find_cache_hit() treats a null
+        # threshold as "no basis for a match" and always misses (app/cache.py),
+        # so leaving this unset would silently make caching a no-op that still
+        # pays the cost of writing every response to cache_entries. 0.85
+        # matches the seeded free-tier demo key's threshold.
+        cache_similarity_threshold=0.85,
         status="active",
     )
     db.add(row)

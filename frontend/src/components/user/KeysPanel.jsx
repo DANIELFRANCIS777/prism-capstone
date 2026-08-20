@@ -62,7 +62,11 @@ export default function KeysPanel({ onKeysChanged }) {
     }
   }
 
-  const atCap = authConfig && keys.length >= (authConfig.max_keys_per_org ?? 1)
+  // Only active keys count against the cap - a disabled key shouldn't
+  // permanently block creating a replacement (matches the backend check in
+  // self_serve_keys.py::create_key).
+  const activeKeyCount = keys.filter((k) => k.status === 'active').length
+  const atCap = authConfig && activeKeyCount >= (authConfig.max_keys_per_org ?? 1)
 
   return (
     <section className="panel">

@@ -12,6 +12,20 @@
       "base_url": "http://mock-beta:9002/v1",
       "api_key": "mock-key-beta",
       "models": ["beta-small", "beta-large"]
+    },
+    {
+      "_comment": "Real provider, BYOK-only (see ROADMAP.md). api_key is a deliberate non-secret placeholder - every tenant without their own credential in provider_credentials gets a clean 401/upstream_error from Groq, by design, until they add their own key via the tenant console.",
+      "name": "groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key": "byok-required-add-your-own-groq-key",
+      "models": ["openai/gpt-oss-120b"]
+    },
+    {
+      "_comment": "Real provider, BYOK-only - same as groq above.",
+      "name": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "api_key": "byok-required-add-your-own-gemini-key",
+      "models": ["gemini-2.5-flash-lite"]
     }
   ],
   "model_aliases": {
@@ -20,7 +34,9 @@
     "auto":  {
       "_comment": "smart router: the gateway classifies each prompt's difficulty and routes to a tier; graded against data/routing_eval.jsonl",
       "route_by_difficulty": { "simple": "fast", "complex": "smart" }
-    }
+    },
+    "groq":   { "primary": "openai/gpt-oss-120b" },
+    "gemini": { "primary": "gemini-2.5-flash-lite" }
   },
   "retry": { "max_attempts": 3, "initial_backoff_ms": 200, "backoff_multiplier": 2 },
   "degradation": {

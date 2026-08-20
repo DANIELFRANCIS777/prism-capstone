@@ -20,6 +20,17 @@ _STOPWORDS = {
     "i", "my", "me", "you", "your", "we", "our", "us",
     "please", "kindly",
     "step", "steps", "way", "ways", "method", "methods", "process",
+    # _TOKEN_RE has no apostrophe in its character class, so a contraction
+    # like "what's"/"don't"/"you're"/"I've"/"I'll"/"I'd"/"I'm" splits into two
+    # tokens at the apostrophe - the first half is usually already a stopword
+    # above (what/do/you/i/...), but the second half ("s"/"t"/"re"/"ve"/"ll"/
+    # "d"/"m") would otherwise survive as a spurious one-off token and dilute
+    # the similarity score against an uncontracted phrasing of the same
+    # question (e.g. "What's a message queue?" vs "What is a message queue?"
+    # scored 0.816 instead of 1.0 before this was added - below every
+    # configured cache threshold, a real cost-bearing miss on what should be
+    # an obvious match).
+    "s", "t", "re", "ve", "ll", "d", "m",
 }
 
 _SUFFIXES = ("ing", "ed", "es", "s")

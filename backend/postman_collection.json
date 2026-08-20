@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Prism Gateway",
-    "description": "Every endpoint the gateway exposes. Import into Postman, then just run requests - the collection variables already point at the local Docker stack and the seeded demo keys. Run 'Admin Auth > Login' first if you want to hit any /admin/* route - it automatically saves the access/refresh tokens into collection variables that the other admin requests already reference.",
+    "description": "Every endpoint the gateway exposes. Import into Postman, then just run requests - the collection variables already point at the local Docker stack and the seeded demo keys. Run 'Admin Auth > Login' first if you want to hit any /admin/* route, or 'Self-serve auth > Signup'/'Login' for /me/* routes - both automatically save their access/refresh tokens into collection variables the rest of their folder already references. 'Self-serve (Me) > Create key' likewise saves the raw issued key into {{my_key}}, ready for the 'Real providers (BYOK)' folder.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -14,7 +14,14 @@
     { "key": "research_key", "value": "prism-sk-research-4d5e6f" },
     { "key": "free_key", "value": "prism-sk-free-7g8h9i" },
     { "key": "budget_demo_key", "value": "prism-sk-budget-demo-0j1k2l" },
-    { "key": "search_key_id", "value": "", "description": "Numeric virtual_keys.id for the search tenant - look it up via GET /admin/keys (keys are now referenced by id, not the raw secret)." }
+    { "key": "search_key_id", "value": "", "description": "Numeric virtual_keys.id for the search tenant - look it up via GET /admin/keys (keys are now referenced by id, not the raw secret)." },
+    { "key": "user_email", "value": "postman-tester@example.com", "description": "Change this (or the Signup request will 409 on re-run once the account exists - use Login instead after the first run)." },
+    { "key": "user_password", "value": "postman-test-password", "description": "8+ chars." },
+    { "key": "user_access_token", "value": "" },
+    { "key": "user_refresh_token", "value": "" },
+    { "key": "my_key", "value": "", "description": "Raw self-serve gateway key (prism-sk-...) - auto-filled by 'Self-serve (Me) > Create key'. Shown once by the API; this is where Postman remembers it for you." },
+    { "key": "groq_api_key", "value": "", "description": "Paste your own free key from console.groq.com/keys before running 'Add BYOK credential - groq'. Never commit a real value here." },
+    { "key": "gemini_api_key", "value": "", "description": "Paste your own free key from aistudio.google.com/apikey before running 'Add BYOK credential - gemini'. Never commit a real value here." }
   ],
   "item": [
     {
@@ -250,6 +257,15 @@
           }
         },
         {
+          "name": "List keys (every tenant - operator-provisioned and self-serve)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }],
+            "url": { "raw": "{{base_url}}/admin/keys", "host": ["{{base_url}}"], "path": ["admin", "keys"] }
+          },
+          "description": "Find a key's numeric id here to fill search_key_id - self-serve keys show their org_id, seeded/operator keys show org_id: null."
+        },
+        {
           "name": "Usage summary",
           "request": {
             "method": "GET",
@@ -292,6 +308,303 @@
               "host": ["{{base_url}}"],
               "path": ["admin", "cache", "stats"],
               "query": [{ "key": "key_id", "value": "{{search_key_id}}", "disabled": true }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Self-serve auth",
+      "description": "The tenant equivalent of 'Admin Auth' - a distinct subject space (email/password, not username/password) with its own access+refresh tokens that are never accepted by /admin/* routes, or vice versa.",
+      "item": [
+        {
+          "name": "Auth config (no auth needed)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/auth/config", "host": ["{{base_url}}"], "path": ["auth", "config"] }
+          },
+          "description": "Whether signup is open, and the ceilings a self-serve key is capped at (requests_per_minute, monthly_budget_usd, max keys per org)."
+        },
+        {
+          "name": "Signup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('user_access_token', body.access_token);",
+                  "  pm.collectionVariables.set('user_refresh_token', body.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/signup", "host": ["{{base_url}}"], "path": ["auth", "signup"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{user_email}}\",\n  \"password\": \"{{user_password}}\",\n  \"org_name\": \"Postman Test Org\"\n}"
+            }
+          },
+          "description": "409s if user_email is already registered - change the user_email variable, or just use Login below instead."
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('user_access_token', body.access_token);",
+                  "  pm.collectionVariables.set('user_refresh_token', body.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{user_email}}\",\n  \"password\": \"{{user_password}}\"\n}"
+            }
+          },
+          "description": "Run this after Signup has run once (or after logging out) - the mode toggle bug from 2026-08-19 is a frontend-only issue, this always logs in correctly if the email/password are right."
+        },
+        {
+          "name": "Refresh (rotates the token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.access_token) {",
+                  "  pm.collectionVariables.set('user_access_token', body.access_token);",
+                  "  pm.collectionVariables.set('user_refresh_token', body.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/refresh", "host": ["{{base_url}}"], "path": ["auth", "refresh"] },
+            "body": { "mode": "raw", "raw": "{\n  \"refresh_token\": \"{{user_refresh_token}}\"\n}" }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/logout", "host": ["{{base_url}}"], "path": ["auth", "logout"] },
+            "body": { "mode": "raw", "raw": "{\n  \"refresh_token\": \"{{user_refresh_token}}\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Self-serve (Me)",
+      "description": "Everything scoped to the logged-in tenant - no key/key_id param anywhere, identity comes from user_access_token. Run 'Self-serve auth > Signup' or 'Login' first.",
+      "item": [
+        {
+          "name": "Who am I",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{user_access_token}}" }],
+            "url": { "raw": "{{base_url}}/me", "host": ["{{base_url}}"], "path": ["me"] }
+          }
+        },
+        {
+          "name": "Create key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('my_key', pm.response.json().virtual_key);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/me/keys", "host": ["{{base_url}}"], "path": ["me", "keys"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"postman\",\n  \"requests_per_minute\": 20,\n  \"monthly_budget_usd\": 5\n}"
+            }
+          },
+          "description": "Fails with 422 if you already have an active key (capped at 1 by default) - disable it first (below), or reuse the my_key you already have."
+        },
+        {
+          "name": "List keys",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{user_access_token}}" }],
+            "url": { "raw": "{{base_url}}/me/keys", "host": ["{{base_url}}"], "path": ["me", "keys"] }
+          }
+        },
+        {
+          "name": "Disable a key",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/me/keys/:id", "host": ["{{base_url}}"], "path": ["me", "keys", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"disabled\"\n}" }
+          },
+          "description": "Fill the :id path variable with a key id from 'List keys'. Disabling frees your slot to create a replacement (fixed 2026-08-20 - it used to count disabled keys against the cap too)."
+        },
+        {
+          "name": "List BYOK credentials",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{user_access_token}}" }],
+            "url": { "raw": "{{base_url}}/me/credentials", "host": ["{{base_url}}"], "path": ["me", "credentials"] }
+          }
+        },
+        {
+          "name": "Add BYOK credential - groq",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/me/credentials/groq", "host": ["{{base_url}}"], "path": ["me", "credentials", "groq"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key\": \"{{groq_api_key}}\",\n  \"label\": \"postman\"\n}"
+            }
+          },
+          "description": "Set the groq_api_key collection variable to your real key from console.groq.com/keys first. The response never echoes the plaintext back - only a masked prefix."
+        },
+        {
+          "name": "Add BYOK credential - gemini",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/me/credentials/gemini", "host": ["{{base_url}}"], "path": ["me", "credentials", "gemini"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key\": \"{{gemini_api_key}}\",\n  \"label\": \"postman\"\n}"
+            }
+          },
+          "description": "Set the gemini_api_key collection variable to your real key from aistudio.google.com/apikey first."
+        },
+        {
+          "name": "Remove a BYOK credential",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{user_access_token}}" }],
+            "url": { "raw": "{{base_url}}/me/credentials/groq", "host": ["{{base_url}}"], "path": ["me", "credentials", "groq"] }
+          },
+          "description": "Change 'groq' in the path to whichever provider you want to remove."
+        },
+        {
+          "name": "My usage",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{user_access_token}}" }],
+            "url": { "raw": "{{base_url}}/me/usage", "host": ["{{base_url}}"], "path": ["me", "usage"] }
+          }
+        },
+        {
+          "name": "My recent logs",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{user_access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/me/logs?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["me", "logs"],
+              "query": [{ "key": "limit", "value": "20" }]
+            }
+          }
+        },
+        {
+          "name": "My cache stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{user_access_token}}" }],
+            "url": { "raw": "{{base_url}}/me/cache-stats", "host": ["{{base_url}}"], "path": ["me", "cache-stats"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Real providers (BYOK)",
+      "description": "Uses {{my_key}} (from 'Self-serve (Me) > Create key') against real Groq/Gemini models, not the mocks. Without a matching credential added first, these return a clean 502 upstream_error carrying the real provider's own 401 body - that's the BYOK-required-by-design behavior working, not a bug.",
+      "item": [
+        {
+          "name": "Chat completion - groq (llama-3.3-70b-versatile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{my_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"groq\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"What is a message queue? Answer in one sentence.\"}]\n}"
+            }
+          }
+        },
+        {
+          "name": "Chat completion - groq (repeat, expect cache hit)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{my_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"groq\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"What is a message queue? Answer in one sentence.\"}]\n}"
+            }
+          },
+          "description": "Run the request above once first without changing it, then run this identical copy - check the x-prism-cache response header is 'hit' and x-prism-cost-usd is 0."
+        },
+        {
+          "name": "Chat completion - gemini (gemini-2.5-flash-lite)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{my_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/v1/chat/completions", "host": ["{{base_url}}"], "path": ["v1", "chat", "completions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gemini\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"What is a message queue? Answer in one sentence.\"}]\n}"
             }
           }
         }

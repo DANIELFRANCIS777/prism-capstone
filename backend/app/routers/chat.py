@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
@@ -25,12 +26,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
 async def _log_rejection(
     db: AsyncSession,
     status: str,
     virtual_key_id: int | None = None,
     requested_model: str = "",
     route_reason: str | None = None,
+    latency_ms: int = 0,
 ) -> None:
     """Every rejection path calls this before raising - AGENTS.md: 'Log every
     request, including rejections.'
@@ -44,6 +50,7 @@ async def _log_rejection(
         requested_model=requested_model,
         status=status,
         route_reason=route_reason,
+        latency_ms=latency_ms,
     )
     logger.info(
         "request rejected",
@@ -76,18 +83,22 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
 async def chat_completions(
     request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ):
+    # Wall time for this request, recorded on every logged outcome below.
+    # Streaming measures its own span instead (app/streaming.py), since the
+    # meaningful duration there runs past this handler's return.
+    started = time.monotonic()
     authorization = request.headers.get("authorization")
 
     try:
         key = await authenticate(authorization, db)
     except GatewayError as exc:
-        await _log_rejection(db, "rejected_auth")
+        await _log_rejection(db, "rejected_auth", latency_ms=_elapsed_ms(started))
         raise exc
 
     try:
         body = await request.json()
     except ValueError as exc:
-        await _log_rejection(db, "rejected_invalid_request", key.id)
+        await _log_rejection(db, "rejected_invalid_request", key.id, latency_ms=_elapsed_ms(started))
         raise GatewayError(400, "Request body is not valid JSON", "invalid_request_error") from exc
 
     requested_model = body.get("model")
@@ -95,38 +106,38 @@ async def chat_completions(
     stream = bool(body.get("stream"))
 
     if not requested_model:
-        await _log_rejection(db, "rejected_invalid_request", key.id)
+        await _log_rejection(db, "rejected_invalid_request", key.id, latency_ms=_elapsed_ms(started))
         raise GatewayError(400, "'model' is required", "invalid_request_error")
     if not isinstance(messages, list) or not messages:
-        await _log_rejection(db, "rejected_invalid_request", key.id, requested_model)
+        await _log_rejection(db, "rejected_invalid_request", key.id, requested_model, latency_ms=_elapsed_ms(started))
         raise GatewayError(400, "'messages' must be a non-empty list", "invalid_request_error")
 
     try:
         chain, route_reason = resolve_route(requested_model, messages)
     except UnknownModelError as exc:
-        await _log_rejection(db, "rejected_not_found", key.id, requested_model)
+        await _log_rejection(db, "rejected_not_found", key.id, requested_model, latency_ms=_elapsed_ms(started))
         raise GatewayError(404, str(exc), "not_found_error") from exc
     except RouteNotImplementedError as exc:
-        await _log_rejection(db, "rejected_not_implemented", key.id, requested_model)
+        await _log_rejection(db, "rejected_not_implemented", key.id, requested_model, latency_ms=_elapsed_ms(started))
         raise GatewayError(501, str(exc), "not_implemented_error") from exc
 
     try:
         enforce_allowlist(key, requested_model)
     except GatewayError as exc:
-        await _log_rejection(db, "rejected_allowlist", key.id, requested_model, route_reason)
+        await _log_rejection(db, "rejected_allowlist", key.id, requested_model, route_reason, latency_ms=_elapsed_ms(started))
         raise exc
 
     try:
         await enforce_rate_limit(db, key)
     except GatewayError as exc:
-        await _log_rejection(db, "rejected_rate_limit", key.id, requested_model, route_reason)
+        await _log_rejection(db, "rejected_rate_limit", key.id, requested_model, route_reason, latency_ms=_elapsed_ms(started))
         raise exc
 
     year_month = current_year_month()
     try:
         await enforce_budget(db, key, year_month)
     except GatewayError as exc:
-        await _log_rejection(db, "rejected_budget", key.id, requested_model, route_reason)
+        await _log_rejection(db, "rejected_budget", key.id, requested_model, route_reason, latency_ms=_elapsed_ms(started))
         raise exc
 
     settings = get_settings()
@@ -155,6 +166,7 @@ async def chat_completions(
                 fallback=False,
                 cost_usd=0,
                 route_reason=route_reason,
+                latency_ms=_elapsed_ms(started),
             )
             response.headers["x-prism-provider"] = f"{cached.resolved_provider}/{cached.resolved_model}"
             response.headers["x-prism-cache"] = "hit"
@@ -171,7 +183,7 @@ async def chat_completions(
             await log_request(
                 db, virtual_key_id=key.id, requested_model=requested_model,
                 status="upstream_error", retries=getattr(exc, "retries", 0),
-                route_reason=route_reason,
+                route_reason=route_reason, latency_ms=_elapsed_ms(started),
             )
             raise GatewayError(502, str(exc), "upstream_error") from exc
 
@@ -194,7 +206,7 @@ async def chat_completions(
         await log_request(
             db, virtual_key_id=key.id, requested_model=requested_model,
             status="upstream_error", retries=getattr(exc, "retries", 0),
-            route_reason=route_reason,
+            route_reason=route_reason, latency_ms=_elapsed_ms(started),
         )
         raise GatewayError(502, str(exc), "upstream_error") from exc
 
@@ -224,6 +236,7 @@ async def chat_completions(
         fallback=result.fallback,
         retries=result.retries,
         route_reason=route_reason,
+        latency_ms=_elapsed_ms(started),
     )
 
     response.headers["x-prism-provider"] = f"{result.route.provider_name}/{result.route.model}"

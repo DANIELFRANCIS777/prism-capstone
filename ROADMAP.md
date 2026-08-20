@@ -46,6 +46,10 @@ Nothing built on top survives without this. No new user-facing features in this 
       catalog and scoped to the calling key's allowlist.
 - [ ] **Prometheus `/metrics`** — RED metrics per provider/model/tenant, cache hit rate,
       rejection counters. Sentry hook (optional `SENTRY_DSN`, no-op when unset).
+- [ ] **TTFT (time to first token)** — providers report it; Prism records total latency only.
+      `app/streaming.py` already knows when the first line arrives, so this is a column plus one
+      assignment. Worth having before the savings dashboard, since "cached response in 3ms vs
+      320ms to first token upstream" is a sharper claim than total latency alone.
 - [ ] **Real provider adapters** — OpenAI and Anthropic alongside the current Groq/Gemini
       registration.
 - [ ] **CI** — GitHub Actions: lint, pytest against a Postgres service, Docker build, dependency

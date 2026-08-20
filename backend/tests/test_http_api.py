@@ -78,6 +78,61 @@ async def test_models_lists_every_allowed_entry_for_a_broad_key(client, db):
     assert ids == ["fast", "gemini-2.5-flash", "openai/gpt-oss-20b"]
 
 
+async def test_log_rejection_persists_the_latency_it_is_given(db):
+    """Regression test: latency_ms was only ever set on the streaming path,
+    so every other logged outcome - successes, cache hits, rejections -
+    silently defaulted to 0. The dashboard reported 0ms on rows the
+    provider's own console showed as multi-second, and threw away the
+    evidence that a cache hit is orders of magnitude faster than an upstream
+    call.
+
+    Asserts the plumbing (the argument reaches the stored row) with a fixed
+    value rather than timing a real request: a rejection can legitimately
+    complete in under a millisecond and truncate to 0, which would make a
+    "> 0" assertion flaky rather than meaningful."""
+    from sqlalchemy import select
+
+    from app.models import RequestLog
+    from app.routers.chat import _log_rejection
+
+    await _log_rejection(db, "rejected_auth", latency_ms=1234)
+
+    row = (
+        await db.execute(
+            select(RequestLog)
+            .where(RequestLog.status == "rejected_auth")
+            .order_by(RequestLog.id.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    assert row.latency_ms == 1234
+
+
+async def test_rejected_request_is_logged_with_a_sane_latency(client, db):
+    """The end-to-end counterpart: a real request through the ASGI stack
+    lands a row whose latency is a plausible measurement, not a placeholder."""
+    from sqlalchemy import select
+
+    from app.models import RequestLog
+
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer definitely-not-a-real-key"},
+        json={"model": "fast", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 401
+
+    row = (
+        await db.execute(
+            select(RequestLog)
+            .where(RequestLog.status == "rejected_auth")
+            .order_by(RequestLog.id.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    assert 0 <= row.latency_ms < 60_000
+
+
 async def test_health_is_unauthenticated_and_ok(client):
     response = await client.get("/health")
     assert response.status_code == 200

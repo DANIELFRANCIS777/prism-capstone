@@ -144,6 +144,37 @@ curl -s -i http://localhost:8080/v1/chat/completions \
   | grep -E "^HTTP|^x-prism"
 ```
 
+## 5b. Reconciling Prism's numbers against the provider's own console
+
+Worth doing once with real traffic — and worth knowing which differences are *expected*, because
+three of them look like bugs and aren't.
+
+**Should match exactly:**
+
+| Field | Why |
+|---|---|
+| Prompt / completion tokens | Taken verbatim from the provider's reported `usage`, never counted client-side |
+| Cost | Computed from those tokens × `data/model_pricing.json`. If this drifts, the price entry is stale — check the provider's pricing page |
+
+A real reconciliation against Groq's console: three calls reporting `(82,62)`, `(77,2136)`,
+`(76,2140)` summed to 235 prompt / 4338 completion tokens and $0.002638 in Prism — matching Groq
+to the token and the microdollar.
+
+**Expected to differ:**
+
+- **Prism shows more requests than the provider.** Cache hits never reach the provider — that's
+  the entire point. 7 requests in Prism against 5 at Groq means 2 were served from cache. Compare
+  Prism's *misses* to the provider's request count, not its total.
+- **Prism's timestamps run slightly later.** The provider timestamps when a request *arrives*;
+  Prism writes its log row after the response completes and its own accounting finishes. The gap
+  equals that request's latency plus a fraction of a second — a 4.8s call logged at 10:20:11
+  upstream appears at 10:20:16 here.
+- **The provider may show requests Prism never made.** Anything sent to the provider directly,
+  bypassing the gateway, appears in their console only.
+
+**Not tracked yet:** TTFT (time to first token). The provider's console reports it; Prism records
+total latency only. Meaningful mainly for streaming — noted in `ROADMAP.md`.
+
 ## 6. Usage dashboard
 
 After a few requests from §5:

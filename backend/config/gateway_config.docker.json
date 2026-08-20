@@ -18,14 +18,14 @@
       "name": "groq",
       "base_url": "https://api.groq.com/openai/v1",
       "api_key": "byok-required-add-your-own-groq-key",
-      "models": ["openai/gpt-oss-120b"]
+      "models": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
     },
     {
       "_comment": "Real provider, BYOK-only - same as groq above.",
       "name": "gemini",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "api_key": "byok-required-add-your-own-gemini-key",
-      "models": ["gemini-2.5-flash-lite"]
+      "models": ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
     }
   ],
   "model_aliases": {

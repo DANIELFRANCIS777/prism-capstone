@@ -24,9 +24,14 @@ Wait ~10s, then confirm everything is healthy:
 
 ```bash
 docker ps --format '{{.Names}}\t{{.Status}}'
-curl -s http://localhost:8080/health        # {"status":"ok"}
+curl -s http://localhost:8080/health        # {"status":"ok"}          - liveness only
+curl -s http://localhost:8080/ready         # {"status":"ready",...}   - also checks Postgres
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:5173   # 200
 ```
+
+`/health` answers "is the process up" and deliberately checks nothing else — a dependency outage
+shouldn't get the container killed and restarted. `/ready` answers "can this replica actually
+serve a request" by pinging Postgres, and is what a load balancer should watch.
 
 | Service | URL |
 |---|---|
@@ -75,6 +80,8 @@ All in the browser at http://localhost:5173.
 | 3.3 | Click **Log out** (top right) | Returns to the signup/login screen |
 | 3.4 | Click the **Log in** tab specifically, enter the same email/password, submit | Lands back on the dashboard. **Note:** the form resets to the "Sign up" tab after logout — if login ever seems to fail, check you're actually on the Log in tab, not silently retrying signup with the same email (which correctly fails with "already exists") |
 | 3.5 | Try signing up again with the same email (fresh browser / incognito) | `409` — "An account with this email already exists" |
+| 3.6 | Enter a **wrong** password 5 times in a row, then the correct one | The 6th attempt returns `429`, and the correct password is *also* refused: "Too many failed attempts. Try again in 15 minutes." The lockout is per account, so a different account still logs in fine |
+| 3.7 | Fail 3 times, then log in correctly, then fail 4 more times | Still logs in — a successful login clears the failure streak, so occasional typos never accumulate toward a lockout |
 
 ## 4. API keys and ceiling enforcement
 
@@ -95,6 +102,25 @@ curl -s -X POST http://localhost:8080/me/keys -H "Authorization: Bearer $TOKEN" 
   -H "Content-Type: application/json" \
   -d '{"requests_per_minute": 30, "monthly_budget_usd": 20}'
 ```
+
+## 4b. Model discovery (`GET /v1/models`)
+
+The standard OpenAI-compatible discovery endpoint, so an OpenAI SDK pointed at Prism can list
+models the usual way. Served from Prism's own registered catalog (not a live call out to Groq or
+Gemini on every request), and **scoped to the calling key's allowlist** — which is also what makes
+a separate "is this model valid for this provider" check unnecessary: a key that can't reach a
+provider never sees its models here.
+
+```bash
+curl -s http://localhost:8080/v1/models -H "Authorization: Bearer prism-sk-search-1a2b3c"
+```
+
+| # | Step | Expected |
+|---|---|---|
+| 4b.1 | Call with no `Authorization` header | `401` |
+| 4b.2 | Call with the seeded `search` key (allowlist is `["fast"]`) | Exactly one entry: `fast`, with `"owned_by": "prism"` (aliases belong to Prism, not one provider — `fast` can fail over between providers) |
+| 4b.3 | Call with the seeded `research` key | `auto`, `fast`, `smart` |
+| 4b.4 | Call with your self-serve key | The full catalog, including `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `gemini-2.5-flash-lite`, `gemini-2.5-flash` — each with its real provider in `owned_by` |
 
 ## 5. BYOK — real provider credentials
 
@@ -202,6 +228,18 @@ curl -s -i http://localhost:8080/v1/chat/completions -H "Authorization: Bearer p
 | 9.4 | An admin-scoped access token against `/me` | `401` — "Not a user token" |
 | 9.5 | `POST /me/keys` with `requests_per_minute` above the ceiling | `422 invalid_request_error` |
 | 9.6 | `POST /auth/signup` with an email already in use | `409 email_taken` |
+| 9.7 | More than 10 login/signup attempts in a minute from one IP | `429 rate_limit_exceeded` |
+| 9.8 | `GET /v1/models` with no key | `401 authentication_error` |
+
+## 10. Operational checks
+
+| # | Step | Expected |
+|---|---|---|
+| 10.1 | `docker logs prism-capstone-gateway-1` | One JSON object per line (`ts`/`level`/`logger`/`message`), not plain text — parseable by a log aggregator without a custom pattern |
+| 10.2 | Send a request that gets rejected (bad key, over budget), then check the logs | A `"request rejected"` line whose `request_id` matches the corresponding `request_logs` row, so a log line and its DB row can be correlated |
+| 10.3 | Stop Postgres (`docker stop prism-capstone-postgres-1`), then curl both health endpoints | `/health` still `200` (process is alive); `/ready` returns `503` with `"database": "unavailable"`. Restart Postgres to continue |
+| 10.4 | Start the gateway with `ENVIRONMENT=production` and the default admin password | Refuses to boot with an explicit error. Boots normally once `ADMIN_BOOTSTRAP_PASSWORD` is set to something real |
+| 10.5 | Take a provider down (`curl -X POST http://localhost:9001/admin/config -d '{"mode":"down"}'`) and send a `fast` request | Logs show `"upstream call failed; retrying"` then `"failing over to the next candidate"` before the request succeeds on beta. Restore with `{"mode":"ok"}` |
 
 ## Known, expected, non-failures
 

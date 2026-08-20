@@ -107,6 +107,36 @@
       ]
     },
     {
+      "name": "Model discovery",
+      "description": "GET /v1/models - the standard OpenAI-compatible discovery endpoint, served from Prism's own registered catalog (not a live call out to the provider). Scoped to the calling key's allowlist, which is what makes a separate model-vs-provider validation step unnecessary.",
+      "item": [
+        {
+          "name": "List models - seeded search key (allowlist is [fast] only)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{search_key}}" }],
+            "url": { "raw": "{{base_url}}/v1/models", "host": ["{{base_url}}"], "path": ["v1", "models"] }
+          }
+        },
+        {
+          "name": "List models - self-serve key (full catalog)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{my_key}}" }],
+            "url": { "raw": "{{base_url}}/v1/models", "host": ["{{base_url}}"], "path": ["v1", "models"] }
+          },
+          "description": "Includes both Groq models and both Gemini models. Aliases report owned_by 'prism' (they can fail over between providers); literal model names report their real provider."
+        },
+        {
+          "name": "List models - no key (401)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/v1/models", "host": ["{{base_url}}"], "path": ["v1", "models"] }
+          }
+        }
+      ]
+    },
+    {
       "name": "Error cases",
       "item": [
         {
@@ -250,11 +280,20 @@
       "name": "Admin",
       "item": [
         {
-          "name": "Health",
+          "name": "Health (liveness)",
           "request": {
             "method": "GET",
             "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
-          }
+          },
+          "description": "Is the process up. Deliberately checks nothing else - a dependency outage shouldn't get the container killed and restarted."
+        },
+        {
+          "name": "Ready (readiness - checks Postgres)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/ready", "host": ["{{base_url}}"], "path": ["ready"] }
+          },
+          "description": "Can this replica actually serve a request. Returns 503 if Postgres is unreachable - point load balancer readiness probes here, not at /health."
         },
         {
           "name": "List keys (every tenant - operator-provisioned and self-serve)",

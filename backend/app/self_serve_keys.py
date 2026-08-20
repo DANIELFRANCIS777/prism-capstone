@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import GatewayError, hash_virtual_key
-from app.config import get_settings, load_gateway_config, model_provider_map
+from app.config import get_settings, known_catalog_names
 from app.models import VirtualKey
 
 
@@ -27,7 +27,7 @@ def _validate_model_allowlist(model_allowlist: list[str] | None) -> list[str]:
     Still validate any explicit list names only real aliases/models, so a
     self-serve key can't be created pointing at something that will 404 on
     every request."""
-    known = set(load_gateway_config()["model_aliases"]) | set(model_provider_map())
+    known = known_catalog_names()
     if not model_allowlist:
         return sorted(known)
     unknown = [m for m in model_allowlist if m not in known]

@@ -26,20 +26,44 @@ Nothing built on top survives without this. No new user-facing features in this 
 - [ ] **Alembic migrations** — replace `Base.metadata.create_all` at startup
       ([main.py:19](backend/app/main.py#L19)). Required before any schema change ships to a
       database with real data in it.
-- [ ] **Hashed API keys at rest** — `virtual_keys.virtual_key` currently stores the raw bearer
-      token ([models.py:20](backend/app/models.py#L20)). Move to SHA-256 hash + a display prefix
-      (`prism-sk-…3c`); the plaintext key becomes unrecoverable after creation.
-- [ ] **Org / user tenancy** — today one bootstrap admin sees every tenant's data
-      ([models.py:103](backend/app/models.py#L103)). Add `Organization` → `User` (owner/admin/
-      viewer) → `VirtualKey`, and scope every admin query by org.
-- [ ] **Observability** — structured JSON logs with request-ID propagation, Prometheus
-      `/metrics` (RED metrics per provider/model/tenant), `/health` vs `/ready` split,
-      Sentry hook.
-- [ ] **Real provider adapters** — OpenAI, Anthropic, Gemini behind the existing adapter
-      interface, with a real pricing catalog. Provider credentials encrypted at rest, not
-      plaintext in `config/gateway_config.json`.
-- [ ] **CI** — GitHub Actions: lint, pytest against a Postgres service, Docker build, and the
-      smoke/load/routing-eval verification pass.
+- [x] **Hashed API keys at rest** — SHA-256 `key_hash` + display `key_prefix`; the four dependent
+      tables now reference `virtual_keys.id` instead of copying the secret.
+- [x] **Org / user tenancy** — `Organization` → `User` → `VirtualKey`, self-serve signup/login on
+      a separate JWT scope from the platform operator, every `/me/*` query scoped by org.
+- [x] **BYOK provider credentials** — Fernet-encrypted per org, consulted per candidate during
+      dispatch, falling back to the platform's static config when absent.
+- [x] **Auth hardening** — per-IP/per-email throttling and consecutive-failure lockout on
+      `/auth/login`, `/auth/signup`, `/admin/auth/login`; production refuses to boot with the
+      default admin password.
+- [x] **Structured logging** — JSON logs with `request_id` correlation to the `request_logs` row,
+      covering rejections, dispatch retries, and failovers. Catch-all exception handler.
+- [x] **`/health` vs `/ready` split** — `/ready` verifies Postgres connectivity for load-balancer
+      routing decisions.
+- [x] **Table pruning** — in-process maintenance loop (advisory-lock serialized across replicas)
+      pruning stale rate-limit windows and expired refresh tokens. Same mechanism will host the
+      provider catalog sync.
+- [x] **Model discovery** — `GET /v1/models`, OpenAI-compatible, served from the registered
+      catalog and scoped to the calling key's allowlist.
+- [ ] **Prometheus `/metrics`** — RED metrics per provider/model/tenant, cache hit rate,
+      rejection counters. Sentry hook (optional `SENTRY_DSN`, no-op when unset).
+- [ ] **Real provider adapters** — OpenAI and Anthropic alongside the current Groq/Gemini
+      registration.
+- [ ] **CI** — GitHub Actions: lint, pytest against a Postgres service, Docker build, dependency
+      audit (`pip-audit` / `npm audit`), and the smoke/load/routing-eval verification pass. Highest
+      remaining leverage: it automates the pass that's currently run by hand before every change.
+- [ ] **Production container hardening** — backend image runs as root (no `USER` directive); the
+      frontend image serves via Vite's dev server, which shouldn't face untrusted networks. Needs
+      a multi-stage build serving static `/dist` behind nginx or caddy.
+- [ ] **Account lifecycle** — change-own-password (cheap, no email infra), then password reset
+      (needs an email dependency + a single-use token table). Today a user who forgets their
+      password has no recovery path.
+
+### Provider catalog sync *(after first deploy)*
+
+`GET /v1/models` reads a catalog that's hand-maintained in `config/gateway_config.json`. Groq
+deprecated `llama-3.3-70b-versatile` mid-development and requests started 404ing with no warning —
+a scheduled job polling each provider's own `/models` endpoint and reconciling against the
+registered catalog would catch that. Belongs in `app/background.py` alongside the pruning loop.
 
 ## Phase 2 — Sharpen the wedge
 

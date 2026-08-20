@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +10,7 @@ from app.budget import current_year_month, enforce_budget, record_usage
 from app.cache import find_cache_hit, record_cache_hit, store_cache_entry
 from app.config import get_settings
 from app.db import get_db
+from app.model_catalog import list_models_for_allowlist
 from app.provider_credentials import load_org_provider_credentials
 from app.rate_limit import enforce_rate_limit
 from app.request_log import log_request
@@ -16,6 +19,8 @@ from app.routing.auto_router import resolve_route
 from app.routing.dispatch import dispatch_non_streaming, dispatch_streaming
 from app.routing.pricing import compute_cost_usd
 from app.streaming import forward_stream
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -28,14 +33,43 @@ async def _log_rejection(
     route_reason: str | None = None,
 ) -> None:
     """Every rejection path calls this before raising - AGENTS.md: 'Log every
-    request, including rejections.'"""
-    await log_request(
+    request, including rejections.'
+
+    Writes both the audit row (request_logs, the billing/reporting source of
+    truth) and an application log line. The row is queryable after the fact;
+    the log line is what shows up while an incident is happening."""
+    entry = await log_request(
         db,
         virtual_key_id=virtual_key_id,
         requested_model=requested_model,
         status=status,
         route_reason=route_reason,
     )
+    logger.info(
+        "request rejected",
+        extra={
+            "request_id": entry.request_id,
+            "status": status,
+            "virtual_key_id": virtual_key_id,
+            "requested_model": requested_model,
+        },
+    )
+
+
+@router.get("/v1/models")
+async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
+    """OpenAI-compatible model discovery, scoped to the calling key.
+
+    Same bearer-key auth as the data plane, but deliberately none of the rest
+    of the pipeline: no rate limit, budget, cache, or request_logs row. This
+    is a metadata lookup, not a billable request, and there's no requested
+    model to log.
+
+    Scoping the listing to the key's own allowlist is also what makes a
+    separate provider-validation step unnecessary - a key that may only reach
+    one provider simply never sees another provider's models here."""
+    key = await authenticate(request.headers.get("authorization"), db)
+    return {"object": "list", "data": list_models_for_allowlist(key.model_allowlist)}
 
 
 @router.post("/v1/chat/completions")

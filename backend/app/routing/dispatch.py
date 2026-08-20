@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -7,6 +8,8 @@ from app.adapters.base import UpstreamError
 from app.config import load_gateway_config
 from app.providers import get_provider
 from app.routing.aliases import ResolvedRoute
+
+logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
@@ -55,6 +58,16 @@ async def dispatch_non_streaming(
     for i, route in enumerate(chain):
         if time.monotonic() >= deadline:
             break
+        if i > 0:
+            logger.warning(
+                "failing over to the next candidate",
+                extra={
+                    "provider": route.provider_name,
+                    "model": route.model,
+                    "candidate_index": i,
+                    "previous_error": str(last_error) if last_error else None,
+                },
+            )
         override = provider_credentials.get(route.provider_name) if provider_credentials else None
         adapter = get_provider(route.provider_name, override)
         backoff = policy["initial_backoff_ms"] / 1000
@@ -72,6 +85,16 @@ async def dispatch_non_streaming(
                 if not _is_retryable(exc) or is_last_attempt:
                     break
                 total_retries += 1
+                logger.warning(
+                    "upstream call failed; retrying",
+                    extra={
+                        "provider": route.provider_name,
+                        "model": route.model,
+                        "attempt": attempt + 1,
+                        "status_code": exc.status_code,
+                        "error": str(exc),
+                    },
+                )
                 await asyncio.sleep(backoff)
                 backoff *= policy["backoff_multiplier"]
 
@@ -113,6 +136,16 @@ async def dispatch_streaming(
     for i, route in enumerate(chain):
         if time.monotonic() >= deadline:
             break
+        if i > 0:
+            logger.warning(
+                "failing over to the next candidate",
+                extra={
+                    "provider": route.provider_name,
+                    "model": route.model,
+                    "candidate_index": i,
+                    "previous_error": str(last_error) if last_error else None,
+                },
+            )
         override = provider_credentials.get(route.provider_name) if provider_credentials else None
         adapter = get_provider(route.provider_name, override)
         backoff = policy["initial_backoff_ms"] / 1000
@@ -129,6 +162,16 @@ async def dispatch_streaming(
                 if is_last_attempt:
                     break
                 total_retries += 1
+                logger.warning(
+                    "upstream call failed; retrying",
+                    extra={
+                        "provider": route.provider_name,
+                        "model": route.model,
+                        "attempt": attempt + 1,
+                        "status_code": exc.status_code,
+                        "error": str(exc),
+                    },
+                )
                 await asyncio.sleep(backoff)
                 backoff *= policy["backoff_multiplier"]
                 continue
@@ -138,6 +181,16 @@ async def dispatch_streaming(
                 if not _is_retryable(exc) or is_last_attempt:
                     break
                 total_retries += 1
+                logger.warning(
+                    "upstream call failed; retrying",
+                    extra={
+                        "provider": route.provider_name,
+                        "model": route.model,
+                        "attempt": attempt + 1,
+                        "status_code": exc.status_code,
+                        "error": str(exc),
+                    },
+                )
                 await asyncio.sleep(backoff)
                 backoff *= policy["backoff_multiplier"]
                 continue

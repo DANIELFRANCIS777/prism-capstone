@@ -1,11 +1,18 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import GatewayError
+from app.auth_throttle import (
+    clear_auth_failures,
+    client_identifier,
+    enforce_auth_rate_limit,
+    enforce_not_locked_out,
+    record_auth_failure,
+)
 from app.config import get_settings, load_gateway_config
 from app.db import get_db
 from app.models import Organization, RequestLog, User, VirtualKey
@@ -70,10 +77,12 @@ async def auth_config():
 
 
 @router.post("/auth/signup")
-async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
+async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depends(get_db)):
     settings = get_settings()
     if not settings.self_serve_signup_enabled:
         raise GatewayError(403, "Signup is disabled on this instance", "signup_disabled")
+
+    await enforce_auth_rate_limit(db, "signup", client_identifier(request))
 
     existing = await db.execute(select(User.id).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
@@ -94,8 +103,22 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/auth/login")
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    user = await authenticate_user(body.email, body.password, db)
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    # Throttle on both the caller's IP and the targeted email: the IP limit
+    # stops one host spraying many accounts, the email limit stops a
+    # distributed attempt on one account.
+    email = body.email.strip().lower()
+    await enforce_auth_rate_limit(db, "login", client_identifier(request))
+    await enforce_auth_rate_limit(db, "login_email", email)
+    await enforce_not_locked_out(db, email)
+
+    try:
+        user = await authenticate_user(body.email, body.password, db)
+    except GatewayError:
+        await record_auth_failure(db, email)
+        raise
+
+    await clear_auth_failures(db, email)
     return await issue_token_pair(user, db)
 
 

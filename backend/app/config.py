@@ -1,6 +1,7 @@
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,6 +13,12 @@ CONFIG_DIR = BACKEND_ROOT / "config"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACKEND_ROOT / ".env", extra="ignore")
+
+    # "production" turns on the deployment safety checks in
+    # validate_production_settings() - notably refusing to boot with the
+    # well-known default admin password. Left as "development" so local dev
+    # and the demo compose stack keep working with zero configuration.
+    environment: Literal["development", "production"] = "development"
 
     database_url: str = "postgresql+asyncpg://prism:prism@localhost:5432/prism"
     upstream_timeout_seconds: float = 10.0
@@ -51,6 +58,22 @@ class Settings(BaseSettings):
     self_serve_max_requests_per_minute: int = 60
     self_serve_max_monthly_budget_usd: float = 50.0
     self_serve_max_keys_per_org: int = 1
+    # Brute-force protection for the unauthenticated auth endpoints
+    # (app/auth_throttle.py). The per-minute ceiling caps request volume per
+    # IP/email; the lockout stops slow guessing that stays under it.
+    auth_max_attempts_per_minute: int = 10
+    auth_lockout_threshold: int = 5
+    auth_lockout_minutes: int = 15
+
+    # Periodic pruning of tables that otherwise grow forever - stale
+    # rate-limit windows and expired refresh tokens (app/background.py).
+    # Runs in-process, serialized across replicas by an advisory lock.
+    maintenance_enabled: bool = True
+    maintenance_interval_seconds: int = 3600
+    rate_limit_window_retention_seconds: int = 600
+
+    log_level: str = "INFO"
+
     # Whether dispatch consults an org's stored BYOK credential at all.
     # Instantly flippable without a redeploy if something looks wrong with it -
     # every seeded/operator-provisioned key is unaffected either way (org_id
@@ -92,6 +115,47 @@ def load_seed_keys() -> list[dict]:
 def model_provider_map() -> dict[str, str]:
     config = load_gateway_config()
     return {model: p["name"] for p in config["providers"] for model in p["models"]}
+
+
+def known_catalog_names() -> set[str]:
+    """Every alias name plus every literal model name any provider registers -
+    the full universe of strings valid in a chat-completions "model" field.
+    Shared by self-serve allowlist validation and GET /v1/models so the two
+    can't drift."""
+    return set(load_gateway_config()["model_aliases"]) | set(model_provider_map())
+
+
+DEFAULT_ADMIN_PASSWORD = "prism-admin-dev-password"
+
+
+def validate_production_settings(settings: "Settings | None" = None) -> None:
+    """Refuse to start a production deployment with known-insecure defaults.
+
+    The bootstrap admin password is the dangerous one: seed_admin_user()
+    writes it into the database on first startup and then never re-seeds
+    (it no-ops once admin_users is non-empty), so an operator who forgets to
+    override it ends up with a permanent, publicly-documented password on an
+    account that can read every tenant's usage and logs. Failing loudly at
+    boot is the only reliable point to catch that.
+
+    Takes settings as an argument so it's unit-testable without touching the
+    lru_cache'd global."""
+    if settings is None:
+        settings = get_settings()
+    if settings.environment != "production":
+        return
+
+    problems = []
+    if settings.admin_bootstrap_password == DEFAULT_ADMIN_PASSWORD:
+        problems.append(
+            "ADMIN_BOOTSTRAP_PASSWORD is still the default value from .env.example. "
+            "Set a real password - this account can read every tenant's usage and logs."
+        )
+    if problems:
+        raise RuntimeError(
+            "Refusing to start with ENVIRONMENT=production and insecure defaults:\n  - "
+            + "\n  - ".join(problems)
+        )
 
 
 def validate_pricing_coverage(

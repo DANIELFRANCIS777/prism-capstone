@@ -1,9 +1,20 @@
+import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import GatewayError
+from app.auth_throttle import (
+    clear_auth_failures,
+    client_identifier,
+    enforce_auth_rate_limit,
+    enforce_not_locked_out,
+    record_auth_failure,
+)
 
 from app.admin_auth import (
     authenticate_admin,
@@ -14,6 +25,8 @@ from app.admin_auth import (
 )
 from app.db import get_db
 from app.models import RequestLog, VirtualKey
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -29,12 +42,45 @@ class RefreshRequest(BaseModel):
 
 @router.get("/health")
 async def health():
+    """Liveness only: is this process up. Deliberately checks nothing else -
+    a dependency being down should not get the container killed and
+    restarted, which wouldn't fix it. Use /ready for routing decisions."""
     return {"status": "ok"}
 
 
+@router.get("/ready")
+async def ready(db: AsyncSession = Depends(get_db)):
+    """Readiness: can this replica actually serve a request. Every data-plane
+    request needs Postgres (auth, rate limit, budget, logging), so a replica
+    that can't reach it should be pulled from the load balancer rather than
+    accepting traffic it will only fail. Point orchestrator readiness probes
+    here, not at /health."""
+    try:
+        await db.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("readiness check failed")
+        return JSONResponse(
+            status_code=503, content={"status": "not_ready", "database": "unavailable"}
+        )
+    return {"status": "ready", "database": "ok"}
+
+
 @router.post("/admin/auth/login")
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    user = await authenticate_admin(body.username, body.password, db)
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """Throttled harder in effect than the tenant login, because the blast
+    radius is bigger: this account can read every tenant's usage and logs,
+    and there is normally exactly one of them."""
+    username = body.username.strip().lower()
+    await enforce_auth_rate_limit(db, "admin_login", client_identifier(request))
+    await enforce_not_locked_out(db, f"admin:{username}")
+
+    try:
+        user = await authenticate_admin(body.username, body.password, db)
+    except GatewayError:
+        await record_auth_failure(db, f"admin:{username}")
+        raise
+
+    await clear_auth_failures(db, f"admin:{username}")
     return await issue_token_pair(user, db)
 
 

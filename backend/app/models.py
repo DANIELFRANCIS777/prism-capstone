@@ -89,6 +89,32 @@ class RateLimitWindow(Base):
     count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class AuthAttempt(Base):
+    """Throttling state for the unauthenticated auth endpoints
+    (app/auth_throttle.py). Two row shapes share this table:
+
+    - scope "login"/"signup"/"admin_login": a per-minute request counter,
+      window_start is the 60s bucket, `attempts` is the count.
+    - scope "lockout": a consecutive-failure streak per account identifier,
+      window_start pinned to 0 so there's one row per identifier, `failures`
+      is the streak and `last_failure_at` is what expires it.
+
+    Kept separate from RateLimitWindow because that one is keyed by
+    virtual_key_id - these attempts have no authenticated key behind them,
+    which is the whole point."""
+
+    __tablename__ = "auth_attempts"
+
+    scope: Mapped[str] = mapped_column(String, primary_key=True)
+    identifier: Mapped[str] = mapped_column(String, primary_key=True)
+    window_start: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_failure_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class UsageRecord(Base):
     """Per-key, per-month spend/token counters used for the hot-path budget check.
     Incremented atomically; kept separate from RequestLog (the reporting source of

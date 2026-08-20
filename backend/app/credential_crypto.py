@@ -5,35 +5,71 @@ BYOK credential must be recoverable: the gateway needs the plaintext to
 authenticate outbound calls to the tenant's own provider on their behalf. So
 this is reversible Fernet encryption, not a hash.
 
-Mirrors app/jwt_keys.py's generate-if-missing/persist/cache shape exactly.
-The key lands in backend/keys/, already Docker-volume-persisted
-(docker-compose.yml's `jwt_keys` volume) - without that, every container
-recreate would mint a new key and silently make every stored credential
-undecryptable."""
+Key material resolves in this order:
 
+1. CREDENTIAL_ENCRYPTION_KEY (an env var / platform secret). This is the
+   only correct option on a host with an ephemeral filesystem - Render,
+   Cloud Run, Fly without a volume - where a generated file does not
+   survive a redeploy.
+2. A file at CREDENTIAL_ENCRYPTION_KEY_PATH, generated on first startup if
+   missing. Convenient for local dev and the Docker Compose stack, where
+   the keys/ directory is volume-persisted.
+
+Losing this key is not a recoverable outage: every provider_credentials row
+becomes permanently undecryptable ciphertext, and every tenant has to
+re-enter their provider API key. app/config.py::validate_production_settings
+refuses to start a production deployment that would depend on the
+generate-a-file path for exactly that reason.
+"""
+
+import logging
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
+
 _fernet_key_cache: bytes | None = None
 
 
 def ensure_fernet_key_exists() -> None:
-    path = Path(get_settings().credential_encryption_key_path)
+    """No-op when the key is supplied by env - there's nothing to create."""
+    settings = get_settings()
+    if settings.credential_encryption_key:
+        return
+
+    path = Path(settings.credential_encryption_key_path)
     if path.exists():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(Fernet.generate_key())
     path.chmod(0o600)
+    logger.warning(
+        "generated a new credential encryption key",
+        extra={
+            "path": str(path),
+            "note": "existing encrypted credentials are only readable with the original key",
+        },
+    )
 
 
 def load_fernet_key() -> bytes:
     global _fernet_key_cache
     if _fernet_key_cache is None:
-        _fernet_key_cache = Path(get_settings().credential_encryption_key_path).read_bytes()
+        settings = get_settings()
+        if settings.credential_encryption_key:
+            _fernet_key_cache = settings.credential_encryption_key.encode()
+        else:
+            _fernet_key_cache = Path(settings.credential_encryption_key_path).read_bytes()
     return _fernet_key_cache
+
+
+def generate_key() -> str:
+    """Mint a key for an operator to paste into their platform's secrets.
+    Exposed for `python -m app.keygen` (see DEPLOYMENT.md)."""
+    return Fernet.generate_key().decode()
 
 
 def encrypt_api_key(plaintext: str) -> str:

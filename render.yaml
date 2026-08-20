@@ -1,0 +1,58 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+#
+# Deploys the gateway and the console. The database is NOT declared here:
+# Render's own free Postgres expires after 30 days, which would silently take
+# the deployment down, so DATABASE_URL points at an external Neon instance
+# whose free tier is permanent. See DEPLOYMENT.md.
+#
+# Secrets marked `sync: false` are entered in the Render dashboard and never
+# committed. The gateway refuses to start in production without them
+# (app/config.py::validate_production_settings) precisely because losing them
+# is unrecoverable - see DEPLOYMENT.md before generating.
+
+services:
+  - type: web
+    name: prism-gateway
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    # The backend image expects the repo root as its build context: app/config.py
+    # locates data/ as a sibling of backend/.
+    dockerContext: .
+    healthCheckPath: /ready
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: GATEWAY_CONFIG_FILE
+        # The docker variant points the mock providers at compose service
+        # names, which don't exist here. Real providers (groq, gemini) are
+        # identical in both files and are what a deployed instance serves.
+        value: gateway_config.json
+      - key: CORS_ALLOW_ORIGINS
+        # Must list the console's real origin, or the browser blocks every
+        # API call. Update after the console's URL is known.
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_BOOTSTRAP_PASSWORD
+        sync: false
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: JWT_PRIVATE_KEY
+        sync: false
+      - key: JWT_PUBLIC_KEY
+        sync: false
+
+  - type: web
+    name: prism-console
+    runtime: docker
+    plan: free
+    rootDir: frontend
+    dockerfilePath: ./Dockerfile.prod
+    dockerContext: .
+    envVars:
+      - key: VITE_API_BASE_URL
+        # Vite inlines this at build time, so it is a build argument rather
+        # than a runtime variable - changing it requires a rebuild, not a
+        # restart.
+        sync: false

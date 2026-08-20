@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     gateway_config_file: str = "gateway_config.json"
 
     # Admin auth: JWT (RS256) access + refresh tokens, see app/admin_auth.py.
+    # Supply the PEM text directly via these env vars on any host with an
+    # ephemeral filesystem; otherwise the *_path files are used, and
+    # generated on first startup if absent (see app/jwt_keys.py).
+    jwt_private_key: str = ""
+    jwt_public_key: str = ""
     jwt_private_key_path: str = str(BACKEND_ROOT / "keys" / "jwt_private.pem")
     jwt_public_key_path: str = str(BACKEND_ROOT / "keys" / "jwt_public.pem")
     access_token_expire_minutes: int = 30
@@ -47,6 +52,10 @@ class Settings(BaseSettings):
     cors_allow_origins: str = "http://localhost:5173,http://localhost:4173"
 
     # BYOK provider credentials (app/credential_crypto.py, app/provider_credentials.py).
+    # Same resolution as the JWT keys above - env var wins, file is the
+    # local-dev fallback. Losing this key makes every stored credential
+    # permanently undecryptable, so production must supply it explicitly.
+    credential_encryption_key: str = ""
     credential_encryption_key_path: str = str(BACKEND_ROOT / "keys" / "credential_encryption.key")
 
     # Self-serve tenant accounts (app/routers/user.py). The ceilings are the
@@ -150,6 +159,25 @@ def validate_production_settings(settings: "Settings | None" = None) -> None:
         problems.append(
             "ADMIN_BOOTSTRAP_PASSWORD is still the default value from .env.example. "
             "Set a real password - this account can read every tenant's usage and logs."
+        )
+    # Key material generated into the filesystem does not survive a redeploy
+    # on a host with an ephemeral disk, which is most managed platforms'
+    # default. For the JWT pair that silently logs everyone out on each
+    # release; for the credential key it permanently destroys every stored
+    # BYOK credential. Neither failure is visible until someone tries to use
+    # the system, so require the secrets to be explicit in production.
+    if not settings.credential_encryption_key:
+        problems.append(
+            "CREDENTIAL_ENCRYPTION_KEY is not set. Without it the key is generated onto "
+            "local disk, and if that disk is ephemeral every stored BYOK credential "
+            "becomes permanently undecryptable on the next deploy. "
+            "Generate one with: python -m app.keygen"
+        )
+    if not (settings.jwt_private_key and settings.jwt_public_key):
+        problems.append(
+            "JWT_PRIVATE_KEY / JWT_PUBLIC_KEY are not both set. Without them the pair is "
+            "generated onto local disk, and if that disk is ephemeral every issued token "
+            "is invalidated on each deploy. Generate them with: python -m app.keygen"
         )
     if problems:
         raise RuntimeError(

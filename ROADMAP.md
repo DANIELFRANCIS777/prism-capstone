@@ -52,12 +52,16 @@ Nothing built on top survives without this. No new user-facing features in this 
       320ms to first token upstream" is a sharper claim than total latency alone.
 - [ ] **Real provider adapters** — OpenAI and Anthropic alongside the current Groq/Gemini
       registration.
-- [ ] **CI** — GitHub Actions: lint, pytest against a Postgres service, Docker build, dependency
-      audit (`pip-audit` / `npm audit`), and the smoke/load/routing-eval verification pass. Highest
-      remaining leverage: it automates the pass that's currently run by hand before every change.
-- [ ] **Production container hardening** — backend image runs as root (no `USER` directive); the
-      frontend image serves via Vite's dev server, which shouldn't face untrusted networks. Needs
-      a multi-stage build serving static `/dist` behind nginx or caddy.
+- [x] **CI** — GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)): pytest
+      against a Postgres service + `alembic check`, frontend lint/build, a full end-to-end
+      verification pass against the Compose stack, production image builds (asserting the backend
+      doesn't run as root), and an advisory dependency audit.
+- [x] **Production container hardening** — backend runs as an unprivileged user and honours
+      `$PORT`; `frontend/Dockerfile.prod` builds the static bundle and serves it via nginx with
+      SPA fallback, hashed-asset caching, and security headers.
+- [x] **Deployable key material** — JWT and credential-encryption keys load from env secrets, so
+      they survive redeploys on ephemeral filesystems. Production refuses to boot without them,
+      since silently regenerating the credential key destroys every stored BYOK credential.
 - [ ] **Account lifecycle** — change-own-password (cheap, no email infra), then password reset
       (needs an email dependency + a single-use token table). Today a user who forgets their
       password has no recovery path.
@@ -96,8 +100,15 @@ The differentiator. Phase 1 makes it safe to build; this makes it worth buying.
 
 ## Phase 4 — Deploy & launch
 
-- [ ] Fly.io deploy (staging + prod), Neon, Upstash, Cloudflare Pages, domain + TLS.
-- [ ] One-command self-host: `docker compose up`, a Fly launch template, and a Helm chart.
+- [x] Deployment path documented and scripted: [DEPLOYMENT.md](DEPLOYMENT.md) +
+      [render.yaml](render.yaml). **Revised off Fly.io** — Fly removed its free allowance for new
+      accounts in Oct 2024 (trial only, then pay-as-you-go). Free stack is now Render (gateway +
+      console, 750 instance-hours/month) and Neon (Postgres, permanent free tier). Nothing is
+      host-specific: a standard Docker image, env vars, and `/ready`, so Fly/Cloud Run/a VPS are
+      the same artifacts.
+- [ ] Actually deploy it and put the URL somewhere.
+- [ ] Custom domain + TLS.
+- [ ] One-command self-host is already `docker compose up`; add a Helm chart if anyone asks.
 - [ ] Landing page built on the savings numbers, not on a feature list.
 - [ ] Launch: GitHub, Hacker News / Product Hunt / r/LocalLLaMA, a teardown post comparing real
       measured cache-hit savings.

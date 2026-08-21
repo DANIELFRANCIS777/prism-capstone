@@ -7,7 +7,7 @@ import UsageCard from '../UsageCard'
 import CredentialsPanel from './CredentialsPanel'
 import KeysPanel from './KeysPanel'
 
-export default function UserDashboard({ onOperatorLogin }) {
+export default function UserDashboard() {
   const { authFetch, logout } = useUserAuth()
   const [me, setMe] = useState(null)
   const [usage, setUsage] = useState(null)
@@ -56,9 +56,6 @@ export default function UserDashboard({ onOperatorLogin }) {
               {me.org.name || 'Your org'} · {me.email}
             </span>
           )}
-          <button className="link" onClick={onOperatorLogin}>
-            Operator login
-          </button>
           <button className="secondary" onClick={logout}>
             Log out
           </button>

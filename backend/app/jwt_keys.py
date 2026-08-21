@@ -18,6 +18,7 @@ would silently break on each release.
 """
 
 import logging
+import os
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -51,6 +52,28 @@ def generate_key_pair() -> tuple[str, str]:
     return private_pem, public_pem
 
 
+def assert_readable(path: Path, env_var: str) -> None:
+    """Fail at startup rather than on the first request that needs the key.
+
+    The case this catches: a key file created by an earlier version of the
+    image that ran as root, sitting in a Docker volume with mode 600, after
+    the container switched to an unprivileged user. Existence checks pass,
+    so nothing complains until something tries to read it - which is a 500
+    on first login, with the real cause buried in a traceback."""
+    try:
+        path.read_bytes()
+    except PermissionError as exc:
+        raise RuntimeError(
+            f"{path} exists but is not readable by this process "
+            f"(uid {os.getuid()}). This usually means the file was created by an "
+            "earlier container that ran as root and is now in a volume the "
+            "unprivileged user can't read.\n"
+            f"  Fix the ownership:  docker run --rm -v prism_jwt_keys:/k alpine "
+            f"chown -R 10001:10001 /k\n"
+            f"  Or supply the key via the {env_var} environment variable instead."
+        ) from exc
+
+
 def ensure_keys_exist() -> None:
     """No-op when the pair is supplied by env - there's nothing to create."""
     settings = get_settings()
@@ -60,6 +83,8 @@ def ensure_keys_exist() -> None:
     private_path = Path(settings.jwt_private_key_path)
     public_path = Path(settings.jwt_public_key_path)
     if private_path.exists() and public_path.exists():
+        assert_readable(private_path, "JWT_PRIVATE_KEY")
+        assert_readable(public_path, "JWT_PUBLIC_KEY")
         return
 
     private_path.parent.mkdir(parents=True, exist_ok=True)

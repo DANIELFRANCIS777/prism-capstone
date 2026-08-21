@@ -22,7 +22,15 @@ from app.db import Base
 import app.models  # noqa: F401
 
 config = context.config
-if config.config_file_name is not None:
+# Only configure logging from alembic.ini when Alembic is the process - i.e.
+# a CLI invocation. Running in-process at startup (app/migrate.py) means the
+# app has already configured structured logging, and fileConfig defaults to
+# disable_existing_loggers=True: it would silently tear that down, leaving
+# the app with no logs at all for the rest of its life. That is exactly what
+# happened - the startup banner and an unhandled-exception traceback both
+# vanished, making a 500 look like it produced no output.
+_INVOKED_IN_PROCESS = config.attributes.get("connection", None) is not None
+if config.config_file_name is not None and not _INVOKED_IN_PROCESS:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata

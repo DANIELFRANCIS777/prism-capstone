@@ -28,6 +28,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 from app.config import get_settings
+from app.jwt_keys import assert_readable
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ def ensure_fernet_key_exists() -> None:
 
     path = Path(settings.credential_encryption_key_path)
     if path.exists():
+        # Same failure mode as the JWT keys: a file left by a root-era
+        # container in a volume the unprivileged user can't read.
+        assert_readable(path, "CREDENTIAL_ENCRYPTION_KEY")
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(Fernet.generate_key())

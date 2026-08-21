@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAdminAuth } from '../AdminAuthContext'
 import { adminApi } from '../api'
+import { navigate } from '../routing'
 import CacheStatsCard from './CacheStatsCard'
 import RequestLogsTable from './RequestLogsTable'
 import UsageCard from './UsageCard'
@@ -52,9 +53,14 @@ export default function Dashboard() {
     <div className="dashboard">
       <header className="dashboard-header">
         <h1>Prism Ops Console</h1>
-        <button className="secondary" onClick={logout}>
-          Log out
-        </button>
+        <div className="header-right">
+          <button className="link" onClick={() => navigate('/')}>
+            Tenant console
+          </button>
+          <button className="secondary" onClick={logout}>
+            Log out
+          </button>
+        </div>
       </header>
 
       <div className="controls">

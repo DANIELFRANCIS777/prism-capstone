@@ -4,6 +4,14 @@
 
 FROM python:3.13-slim
 
+# Python block-buffers stdout when it isn't a TTY, so in a container log
+# lines sit in the buffer instead of reaching `docker logs` / the platform's
+# log stream. That turns structured logging into "no logs at all" right when
+# you need them - which is exactly how a startup message and an exception
+# traceback went missing while debugging a 500.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /srv/prism-capstone
 
 COPY backend/requirements.txt backend/requirements.txt

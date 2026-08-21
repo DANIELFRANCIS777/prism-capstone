@@ -3,6 +3,12 @@
 **/*.pyc
 backend/.venv
 backend/.env
+# Never bake key material into an image. These are generated locally on first
+# startup, and `COPY backend/ backend/` would otherwise ship a developer's JWT
+# signing key and credential-encryption key inside the published image -
+# enough to forge tokens and decrypt every stored BYOK credential. Production
+# supplies them as env secrets instead (app/jwt_keys.py).
+backend/keys/
 frontend/node_modules
 frontend/dist
 **/.DS_Store

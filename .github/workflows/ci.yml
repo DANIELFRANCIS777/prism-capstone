@@ -141,6 +141,17 @@ jobs:
           user=$(docker run --rm --entrypoint sh prism-backend:ci -c 'id -un')
           echo "backend runs as: $user"
           [ "$user" != "root" ] || { echo "image runs as root"; exit 1; }
+      - name: Confirm no key material was baked into the image
+        # `COPY backend/ backend/` will happily ship a developer's local
+        # keys/ directory - the JWT signing key and the credential
+        # encryption key - unless .dockerignore excludes it. That leak is
+        # invisible from the outside, so assert on it every build.
+        run: |
+          found=$(docker run --rm --entrypoint sh prism-backend:ci -c 'ls -A keys/ 2>/dev/null')
+          if [ -n "$found" ]; then
+            echo "key material present in image: $found"; exit 1
+          fi
+          echo "no key material in image"
       - name: Build the production console image
         working-directory: frontend
         run: docker build -f Dockerfile.prod -t prism-frontend:ci --build-arg VITE_API_BASE_URL=https://example.invalid .

@@ -74,6 +74,16 @@ time gives you different keys — which is the data-loss scenario above.
 
 Save that as your `DATABASE_URL`.
 
+**Pooled vs direct endpoint** — Neon offers both, and the copy button often
+gives you the pooled one (its hostname contains `-pooler`). Either works:
+the gateway detects a transaction-mode pooler from the hostname and switches
+asyncpg to unique, uncached prepared statements, because PgBouncer hands
+consecutive statements to different backend connections and asyncpg would
+otherwise fail with `prepared statement "__asyncpg_stmt_N__" does not exist`.
+The direct endpoint (same host without `-pooler`) is marginally faster for a
+single instance since it keeps a normal client-side connection pool. Use
+whichever you copied.
+
 ## 2. Gateway (Render)
 
 1. Push this repo to GitHub if you haven't.
@@ -99,7 +109,16 @@ Save that as your `DATABASE_URL`.
    `{"status":"ready","database":"ok"}`.
 
 If it refuses to start, read the logs — the startup guard names exactly which
-secret is missing.
+secret is missing. A log line like:
+
+```
+RuntimeError: Refusing to start with ENVIRONMENT=production and insecure defaults:
+  - CREDENTIAL_ENCRYPTION_KEY is not set. ...
+```
+
+is the guard doing its job, not a bug: it stops the deploy *before* tenants
+store credentials that a later redeploy would render unreadable. Set the named
+secret and redeploy.
 
 ## 3. Console (Render)
 

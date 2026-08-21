@@ -109,3 +109,41 @@ def test_production_starts_when_every_secret_is_supplied():
 def test_development_still_starts_with_no_secrets_configured():
     """Local dev and the Compose stack must keep working with zero setup."""
     validate_production_settings(Settings(environment="development"))
+
+
+def test_the_failure_report_never_leaks_secret_values():
+    """The report goes into logs that may be shipped off-host, so it must
+    show presence and length only - never the material itself."""
+    secret_password = "super-secret-password-value"
+    secret_jwt = "-----BEGIN PRIVATE KEY-----\nSECRETKEYMATERIAL\n-----END PRIVATE KEY-----\n"
+    settings = Settings(
+        environment="production",
+        admin_bootstrap_password=secret_password,
+        jwt_private_key=secret_jwt,
+        jwt_public_key="public-part",
+        credential_encryption_key="",
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_production_settings(settings)
+
+    message = str(exc_info.value)
+    assert secret_password not in message
+    assert "SECRETKEYMATERIAL" not in message
+    assert secret_jwt not in message
+    # But it must still be actionable about which one is missing.
+    assert "CREDENTIAL_ENCRYPTION_KEY is EMPTY or unset" in message
+    assert "JWT_PRIVATE_KEY is set" in message
+
+
+def test_the_failure_report_shows_non_secret_values_verbatim():
+    """CORS and ENVIRONMENT are not secret, and reading them back is the
+    fastest way to spot a typo or a variable set on the wrong service."""
+    settings = Settings(
+        environment="production",
+        admin_bootstrap_password="real",
+        cors_allow_origins="https://typo-here.onrender.com",
+        credential_encryption_key="",
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_production_settings(settings)
+    assert "https://typo-here.onrender.com" in str(exc_info.value)

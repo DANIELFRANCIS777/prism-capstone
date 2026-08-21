@@ -183,7 +183,45 @@ def validate_production_settings(settings: "Settings | None" = None) -> None:
         raise RuntimeError(
             "Refusing to start with ENVIRONMENT=production and insecure defaults:\n  - "
             + "\n  - ".join(problems)
+            + "\n\n"
+            + _secret_visibility_report(settings)
         )
+
+
+def _secret_visibility_report(settings: "Settings") -> str:
+    """What the process can actually see, so a failed deploy distinguishes
+    'never set it' from 'set it somewhere this container isn't reading'.
+
+    Only presence and length are reported, never any value - this goes into
+    logs that may be shipped off-host. Length is enough to catch the common
+    paste accidents (empty string, a stray quote) without disclosing key
+    material.
+    """
+    watched = {
+        "ENVIRONMENT": settings.environment,
+        "DATABASE_URL": settings.database_url,
+        "ADMIN_BOOTSTRAP_PASSWORD": settings.admin_bootstrap_password,
+        "CREDENTIAL_ENCRYPTION_KEY": settings.credential_encryption_key,
+        "JWT_PRIVATE_KEY": settings.jwt_private_key,
+        "JWT_PUBLIC_KEY": settings.jwt_public_key,
+        "CORS_ALLOW_ORIGINS": settings.cors_allow_origins,
+    }
+    lines = ["What this process can see (values redacted):"]
+    for name, value in watched.items():
+        if name in ("ENVIRONMENT", "CORS_ALLOW_ORIGINS"):
+            # Not secret, and being able to read them back is the fastest way
+            # to spot a typo or a variable set on the wrong service.
+            lines.append(f"  {name} = {value!r}")
+        elif value:
+            lines.append(f"  {name} is set ({len(value)} chars)")
+        else:
+            lines.append(f"  {name} is EMPTY or unset")
+    lines.append(
+        "\nIf a variable you set shows as unset here, it isn't reaching this "
+        "container: check it's on the gateway service (not the console), saved, "
+        "and that the deploy ran after saving."
+    )
+    return "\n".join(lines)
 
 
 def validate_pricing_coverage(

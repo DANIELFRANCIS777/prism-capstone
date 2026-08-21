@@ -42,11 +42,17 @@ def _engine_kwargs(url: str) -> dict:
     # __asyncpg_stmt_N__ does not exist", and its numeric names can collide
     # across clients. Both fixes are straight from SQLAlchemy's asyncpg
     # dialect docs.
+    # All three are DBAPI arguments, so they belong in connect_args.
+    # prepared_statement_cache_size in particular is NOT a create_engine()
+    # kwarg - passing it there raises "Invalid argument(s)
+    # 'prepared_statement_cache_size' sent to create_engine()" at import
+    # time, which is how this was first found (in a deploy, not a test).
     kwargs["connect_args"] = {
+        # asyncpg's own cache, and SQLAlchemy's cache of asyncpg statements.
         "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
         "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
     }
-    kwargs["prepared_statement_cache_size"] = 0
     # SQLAlchemy's own warning: without NullPool, prepared statements pile up
     # behind the proxy. The pooler is already doing the pooling, so a second
     # pool on this side buys nothing.

@@ -8,6 +8,8 @@ different server connections. Local dev talks straight to Postgres and never
 sees it.
 """
 
+import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.db import _engine_kwargs, _is_transaction_pooled
@@ -39,13 +41,25 @@ def test_a_password_containing_pooler_does_not_trigger_detection():
     assert not _is_transaction_pooled("postgresql+asyncpg://u:pooler-pw@localhost:5432/prism")
 
 
+@pytest.mark.parametrize("url", [NEON_POOLED, NEON_DIRECT, LOCAL])
+def test_the_kwargs_actually_build_an_engine(url):
+    """The regression this exists for: an earlier version returned
+    prepared_statement_cache_size as a create_engine() kwarg, which is a
+    DBAPI argument and belongs in connect_args. Asserting on the returned
+    dict alone missed it completely - create_async_engine raised
+    "Invalid argument(s) ... sent to create_engine()" at import time, so the
+    failure only appeared in a deploy. Build the engine for real."""
+    engine = create_async_engine(url, **_engine_kwargs(url))
+    assert engine is not None
+
+
 def test_pooled_url_disables_prepared_statement_caching():
-    kwargs = _engine_kwargs(NEON_POOLED)
-    assert kwargs["prepared_statement_cache_size"] == 0
-    assert kwargs["connect_args"]["statement_cache_size"] == 0
+    connect_args = _engine_kwargs(NEON_POOLED)["connect_args"]
+    assert connect_args["statement_cache_size"] == 0
+    assert connect_args["prepared_statement_cache_size"] == 0
     # Unique names, since asyncpg's numeric ones collide across clients
     # sharing a proxy.
-    name_func = kwargs["connect_args"]["prepared_statement_name_func"]
+    name_func = connect_args["prepared_statement_name_func"]
     assert name_func() != name_func()
 
 

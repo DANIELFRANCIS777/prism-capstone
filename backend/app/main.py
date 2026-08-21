@@ -40,7 +40,17 @@ async def lifespan(app: FastAPI):
     if settings.maintenance_enabled:
         maintenance = asyncio.create_task(maintenance_loop())
 
-    logger.info("gateway ready", extra={"environment": settings.environment})
+    # CORS origins are logged because a mismatch here is invisible from the
+    # server's side - the browser blocks the call and the console shows a
+    # generic "Failed to fetch" while the API looks perfectly healthy. Seeing
+    # the effective list at startup turns that into a two-second check.
+    logger.info(
+        "gateway ready",
+        extra={
+            "environment": settings.environment,
+            "cors_allow_origins": settings.cors_allow_origin_list,
+        },
+    )
     try:
         yield
     finally:
